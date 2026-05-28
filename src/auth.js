@@ -35,6 +35,15 @@ export async function getAccessToken() {
   return session?.access_token || null;
 }
 
+// Strip the OAuth token fragment (#access_token=...) left in the URL after a
+// Microsoft sign-in redirect. If it lingers, `detectSessionInUrl` can re-read
+// it and silently restore the session — making "Sign out" look broken.
+function clearAuthHashFromUrl() {
+  if (window.location.hash && /access_token|refresh_token|[?&]code=/.test(window.location.hash + window.location.search)) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+}
+
 // ---- Inactivity auto-logout ----
 // Sign the user out after this many ms with no mouse/keyboard/touch activity.
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -97,6 +106,9 @@ async function routeFromSession(session) {
   }
 
   currentUser = user;
+  // Token has been consumed into a session — remove it from the URL so it
+  // can't be replayed to restore the session after sign-out.
+  clearAuthHashFromUrl();
   const employee = await getEmployeeRecord(user.id);
   currentEmployee = employee;
 
@@ -144,6 +156,7 @@ export async function signOut(message) {
   await supabase.auth.signOut();
   currentUser = null;
   currentEmployee = null;
+  clearAuthHashFromUrl();
   showLoginScreen(reason);
 }
 
