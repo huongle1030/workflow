@@ -812,6 +812,138 @@
   .cc-del:hover { background: var(--red-soft); color: var(--red); }
 
   /* ============================================================
+     Case card rows (used by Case Tracker + New Log live tracker)
+     ============================================================ */
+  .cc-case-card {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--white); border: 1px solid var(--slate-light);
+    border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;
+    transition: border-color .12s;
+  }
+  .cc-case-card:hover { border-color: var(--blue); }
+  .cc-case-card .info { flex: 1; min-width: 0; }
+  .cc-case-card .row1 {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+  .cc-case-card .row1 .cnum {
+    font-family: Consolas, monospace; font-weight: 800;
+    color: var(--navy); font-size: 14px;
+  }
+  .cc-case-card .row1 .sep { color: var(--slate); }
+  .cc-case-card .row1 .pname { color: var(--charcoal); font-size: 13px; }
+  .cc-case-card .row1 .wf-badge {
+    padding: 3px 10px; border-radius: 12px;
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase;
+    background: #F3E8FF; color: #6B21A8; border: 1px solid #E9D5FF;
+  }
+  .cc-case-card .row1 .wf-badge.case-review {
+    background: #E0F2FE; color: #075985; border-color: #BAE6FD;
+  }
+  .cc-case-card .row1 .hold-badge {
+    background: #4ADE80; color: #14532d;
+    padding: 3px 10px; border-radius: 12px;
+    font-size: 10px; font-weight: 800;
+  }
+  .cc-case-card .meta {
+    font-size: 11px; color: var(--slate);
+  }
+  .cc-case-card .controls {
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  }
+  .cc-inline-select {
+    padding: 6px 10px; border-radius: 6px;
+    border: 1px solid var(--slate-light);
+    background: var(--white); color: var(--charcoal);
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; min-width: 110px;
+  }
+  .cc-inline-select:focus { outline: none; border-color: var(--blue); }
+  .cc-trash-btn {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--slate); padding: 6px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .12s, color .12s;
+  }
+  .cc-trash-btn:hover { background: var(--red-soft); color: var(--red); }
+  .cc-trash-btn svg { width: 16px; height: 16px; }
+
+  /* Sub-tab toggle (used inside Case Tracker panel) */
+  .cc-subtabs {
+    display: inline-flex; background: #EFF6FB;
+    border: 1px solid var(--slate-light); border-radius: 10px;
+    padding: 4px; margin-bottom: 20px;
+  }
+  .cc-subtab {
+    background: transparent; border: none; cursor: pointer;
+    padding: 8px 18px; border-radius: 7px;
+    font-size: 13px; font-weight: 700; color: var(--slate);
+  }
+  .cc-subtab:hover { color: var(--charcoal); }
+  .cc-subtab.active { background: var(--white); color: var(--navy);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+
+  /* History tab — full-width search row */
+  .cc-hist-filters {
+    display: grid; grid-template-columns: 1fr 220px auto;
+    gap: 14px; margin-bottom: 16px; align-items: flex-end;
+  }
+
+  /* Case Tracker filter row */
+  .cc-tracker-filters {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 16px;
+  }
+  .cc-tracker-filters .cc-input { max-width: 220px; }
+  .cc-tracker-filters .count {
+    margin-left: auto;
+    font-size: 12px; font-weight: 700;
+    color: var(--slate); letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+
+  /* ============================================================
+     Workflow Diagram (static CSS flowchart)
+     ============================================================ */
+  .wf-diagram {
+    background: var(--white); border: 1px solid var(--slate-light);
+    border-radius: 14px; padding: 28px 24px; margin-bottom: 22px;
+  }
+  .wf-diagram h3 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 17px; color: var(--navy);
+    margin-bottom: 22px;
+  }
+  .wf-flow {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 6px; justify-content: flex-start;
+  }
+  .wf-node {
+    background: #EFF6FB; border: 1.5px solid #BAE6FD;
+    color: var(--navy);
+    padding: 10px 14px; border-radius: 10px;
+    font-size: 12px; font-weight: 700;
+    min-width: 110px; text-align: center;
+  }
+  .wf-node.start { background: #E0F2FE; border-color: #7DD3FC; }
+  .wf-node.hold  { background: #FEF3C7; border-color: #FDE68A; color: #92400E; }
+  .wf-node.approve { background: #D1FAE5; border-color: #A7F3D0; color: #065F46; }
+  .wf-node.change  { background: #FEE4E4; border-color: #FBC7C7; color: #B91C1C; }
+  .wf-arrow {
+    color: var(--slate); font-size: 18px; font-weight: 800;
+    padding: 0 2px;
+  }
+  .wf-branch {
+    display: flex; flex-direction: column; gap: 8px;
+    padding-left: 8px; border-left: 2px dashed var(--slate-light);
+    margin-left: 8px;
+  }
+  .wf-branch .wf-branch-row {
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  /* ============================================================
      Product tour overlay
      ============================================================ */
   .tour-spotlight {
@@ -2381,12 +2513,15 @@ We need clean margins to proceed"></textarea>
     </div>
     <button onclick="submitLog()" class="cc-btn-primary" style="margin-top: 18px;">Save Log</button>
   </div>
+
+  <div class="cc-section-label" style="margin-top:30px; margin-bottom:14px;">Case Tracker</div>
+  <div id="cc-newlog-tracker"></div>
 </div>
 
 <div class="panel hidden" id="panel-cc-history">
   <div class="cc-page-title">Log History</div>
   <div class="cc-page-sub">View and manage all case log entries</div>
-  <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:14px; margin-bottom:16px; align-items:flex-end;">
+  <div class="cc-hist-filters">
     <div>
       <label class="cc-field-label">Search</label>
       <input id="hist-search" class="cc-input" oninput="renderHistory()" placeholder="Search by Case ID or Coordinator..." />
@@ -2394,10 +2529,6 @@ We need clean margins to proceed"></textarea>
     <div>
       <label class="cc-field-label">Action</label>
       <select id="hist-action" class="cc-input" onchange="renderHistory()"><option value="all">All Actions</option></select>
-    </div>
-    <div>
-      <label class="cc-field-label">Coordinator</label>
-      <select id="hist-coord" class="cc-input" onchange="renderHistory()"><option value="all">All Coordinators</option></select>
     </div>
     <button onclick="exportFPY()" class="cc-btn-primary" style="margin-top:0;">Export FPY</button>
   </div>
@@ -2407,22 +2538,112 @@ We need clean margins to proceed"></textarea>
 <div class="panel hidden" id="panel-cc-tracker">
   <div class="cc-page-title">Case Tracker</div>
   <div class="cc-page-sub">Track cases through their workflow stages</div>
-  <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:14px; margin-bottom:16px; align-items:flex-end;">
-    <div>
-      <label class="cc-field-label">Workflow</label>
-      <select id="track-workflow" class="cc-input" onchange="renderTracker()">
-        <option value="all">All Workflows</option>
-        <option value="Design">Design</option>
-        <option value="Case Review">Case Review</option>
-      </select>
-    </div>
-    <div>
-      <label class="cc-field-label">Stage</label>
-      <select id="track-stage" class="cc-input" onchange="renderTracker()"><option value="all">All Stages</option></select>
-    </div>
-    <div class="cc-section-label" id="track-count" style="padding-bottom: 12px;">–</div>
+
+  <div class="cc-subtabs" role="tablist">
+    <button class="cc-subtab active" id="cc-subtab-tracker" onclick="setTrackerSubTab('tracker')">Case Tracker</button>
+    <button class="cc-subtab" id="cc-subtab-diagram" onclick="setTrackerSubTab('diagram')">Workflow Diagram</button>
   </div>
-  <div id="cc-tracker-table"></div>
+
+  <div id="cc-tracker-panel">
+    <!-- Add / Update Case form -->
+    <div class="cc-form-card" style="max-width:none; margin-bottom:22px;">
+      <div style="font-size:13px; font-weight:800; color:var(--navy); margin-bottom:14px; letter-spacing:1px; text-transform:uppercase;">Add / Update Case</div>
+      <div class="cc-form-grid">
+        <div>
+          <label class="req">Case ID</label>
+          <input id="track-case-id" type="text" class="cc-input mono" placeholder="Enter case ID" />
+        </div>
+        <div>
+          <label>Patient Name</label>
+          <input id="track-patient" type="text" class="cc-input" placeholder="Patient name" />
+        </div>
+        <div>
+          <label class="req">Workflow</label>
+          <select id="track-form-workflow" class="cc-input">
+            <option value="">Select workflow</option>
+            <option value="Design">Design</option>
+            <option value="Case Review">Case Review</option>
+          </select>
+        </div>
+        <div>
+          <label class="req">Current Stage</label>
+          <select id="track-form-stage" class="cc-input"><option value="">Select stage</option></select>
+        </div>
+        <div>
+          <label>Coordinator</label>
+          <select id="track-form-coord" class="cc-input"><option value="">Select coordinator</option></select>
+        </div>
+        <div>
+          <label>Date</label>
+          <input id="track-form-date" type="date" class="cc-input" />
+        </div>
+        <div class="full">
+          <label>Notes</label>
+          <textarea id="track-form-notes" rows="2" class="cc-input" placeholder="Optional notes..."></textarea>
+        </div>
+      </div>
+      <button onclick="addCaseToTracker()" class="cc-btn-primary" style="margin-top:16px; width:100%;">+ Add to Tracker</button>
+    </div>
+
+    <!-- Filter row -->
+    <div class="cc-tracker-filters">
+      <div>
+        <select id="track-workflow" class="cc-input" onchange="renderTracker()">
+          <option value="all">All Workflows</option>
+          <option value="Design">Design</option>
+          <option value="Case Review">Case Review</option>
+        </select>
+      </div>
+      <div>
+        <select id="track-stage" class="cc-input" onchange="renderTracker()"><option value="all">All Stages</option></select>
+      </div>
+      <div class="count" id="track-count">–</div>
+    </div>
+
+    <div id="cc-tracker-list"></div>
+  </div>
+
+  <div id="cc-diagram-panel" class="hidden">
+    <div class="wf-diagram">
+      <h3>Design Workflow</h3>
+      <div class="wf-flow">
+        <div class="wf-node start">Design</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node">Cases Received from Design</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node">Dr Approval Sent</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node hold">On Hold</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node">Release from Hold</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-branch">
+          <div class="wf-branch-row"><div class="wf-node approve">Same Day Approved</div></div>
+          <div class="wf-branch-row"><div class="wf-node approve">Dr Approved</div></div>
+          <div class="wf-branch-row">
+            <div class="wf-node change">Design Changes Requested</div>
+            <span class="wf-arrow">→</span>
+            <div class="wf-node">Sent Back to Design</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="wf-diagram">
+      <h3>Case Review Workflow</h3>
+      <div class="wf-flow">
+        <div class="wf-node start">Case Review</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node">Missing / Confirm Info</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node hold">On Hold</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node">Released from Hold</div>
+        <span class="wf-arrow">→</span>
+        <div class="wf-node start">Case Review</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="panel hidden" id="panel-cc-prefs">

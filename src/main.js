@@ -2031,6 +2031,18 @@ const ACTION_TYPES = [
 let ccData = { cases: [], logs: [], coordinators: [] };
 let caseTab = 'today';
 let ccLoaded = false;
+let trackerSubTab = 'tracker';
+
+const HOLD_DURATIONS = ['', '24 hr', '48 hr', '72 hr', '1 week'];
+
+const TRASH_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<polyline points="3 6 5 6 21 6"></polyline>' +
+  '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>' +
+  '<path d="M10 11v6M14 11v6"></path>' +
+  '<path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path>' +
+  '</svg>';
 
 function pacificDate(off = 0) {
   const d = new Date();
@@ -2078,10 +2090,6 @@ function populateCcFilters() {
   coordSel.innerHTML = '<option value="all">All Coordinators</option>' +
     coordNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
 
-  const histCoord = document.getElementById('hist-coord');
-  histCoord.innerHTML = '<option value="all">All Coordinators</option>' +
-    coordNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-
   const histAction = document.getElementById('hist-action');
   histAction.innerHTML = '<option value="all">All Actions</option>' +
     ACTION_TYPES.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
@@ -2101,16 +2109,24 @@ function populateNewLogForm() {
   actSel.innerHTML = '<option value="">Select action type</option>' +
     ACTION_TYPES.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
 
-  const coordSel = document.getElementById('log-coordinator');
-  coordSel.innerHTML = '<option value="">Select coordinator</option>' +
+  const coordOpts = '<option value="">Select coordinator</option>' +
     ccData.coordinators.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  document.getElementById('log-coordinator').innerHTML = coordOpts;
 
-  const stageSel = document.getElementById('log-stage');
   const stages = [...new Set(ccData.cases.map(c => c.current_stage).filter(Boolean))].sort();
-  stageSel.innerHTML = '<option value="">Select stage</option>' +
+  const stageOpts = '<option value="">Select stage</option>' +
     stages.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  document.getElementById('log-stage').innerHTML = stageOpts;
 
   document.getElementById('log-date').value = pacificDate();
+
+  // Case Tracker — Add/Update Case form
+  const trCoord = document.getElementById('track-form-coord');
+  if (trCoord) trCoord.innerHTML = coordOpts;
+  const trStage = document.getElementById('track-form-stage');
+  if (trStage) trStage.innerHTML = stageOpts;
+  const trDate = document.getElementById('track-form-date');
+  if (trDate && !trDate.value) trDate.value = pacificDate();
 }
 
 function getFilteredLogs() {
@@ -2139,12 +2155,9 @@ function renderDashboard() {
   filtered.forEach(l => { actionCounts[l.action_type] = (actionCounts[l.action_type] || 0) + 1; });
   const topAction = Object.entries(actionCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || '-';
 
-  const uniqueCoords = new Set(filtered.map(l => l.coordinator).filter(Boolean)).size;
-
   document.getElementById('cc-stat-total').textContent  = filtered.length;
   document.getElementById('cc-stat-today').textContent  = todayLogs.length;
   document.getElementById('cc-stat-top').textContent    = topAction;
-  document.getElementById('cc-stat-coords').textContent = uniqueCoords;
 
   document.getElementById('cc-tab-today').classList.toggle('cc-pill-active', caseTab === 'today');
   document.getElementById('cc-tab-yesterday').classList.toggle('cc-pill-active', caseTab === 'yesterday');
@@ -2186,30 +2199,50 @@ function setCaseTab(tab) { caseTab = tab; renderDashboard(); }
 
 function renderLogTable(logs) {
   if (!logs.length) return '<div class="empty">No log entries.</div>';
-  return '<table class="cc-table"><thead><tr><th>Case ID</th><th>Action</th><th>Coordinator</th><th>Date</th><th>Notes</th></tr></thead><tbody>' +
+  return '<table class="cc-table"><thead><tr><th>Case ID</th><th>Action</th><th>Coordinator</th><th>Date</th><th>Notes</th><th></th></tr></thead><tbody>' +
     logs.map(l => {
       const d = l.log_date || (l.created_date || '').split('T')[0] || '';
       const dateNice = d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }) : '';
       const slug = (l.action_type || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const delBtn = l.id != null
+        ? '<button class="cc-trash-btn" title="Delete log entry" onclick="deleteLogEntry(\'' + esc(String(l.id)) + '\', \'' + esc(l.case_id || '') + '\')">' + TRASH_ICON + '</button>'
+        : '';
       return '<tr><td class="case-id-cell">' + esc(l.case_id || '') + '</td>' +
         '<td><span class="cc-action-badge ' + slug + '">' + esc(l.action_type || '') + '</span></td>' +
         '<td>' + esc(l.coordinator || '-') + '</td>' +
         '<td class="muted">' + esc(dateNice) + '</td>' +
-        '<td class="muted">' + (esc((l.notes||'').slice(0,80)) || '-') + '</td></tr>';
+        '<td class="muted">' + (esc((l.notes||'').slice(0,80)) || '-') + '</td>' +
+        '<td style="text-align:right; width:40px;">' + delBtn + '</td></tr>';
     }).join('') +
     '</tbody></table>';
+}
+
+async function deleteLogEntry(id, caseId) {
+  if (!confirm('Delete log entry for ' + (caseId || '?') + '?')) return;
+  try {
+    if (inCowork) {
+      await runMcpSql("DELETE FROM \"CaseLog\" WHERE id = '" + String(id).replace(/'/g,"''") + "'");
+    } else {
+      const cfg = getConfig();
+      const res = await fetch(cfg.url + '/rest/v1/CaseLog?id=eq.' + encodeURIComponent(id), {
+        method: 'DELETE',
+        headers: { apikey: cfg.key, Authorization: 'Bearer '+cfg.key },
+      });
+      if (!res.ok) throw new Error(await res.text());
+    }
+    toast('Log entry deleted', 'ok');
+    await reloadCcData();
+  } catch (e) { toast('Delete failed: ' + (e.message || e), 'err'); }
 }
 
 function renderHistory() {
   if (!ccLoaded) return;
   const search = document.getElementById('hist-search').value.toLowerCase();
   const action = document.getElementById('hist-action').value;
-  const coord  = document.getElementById('hist-coord').value;
   const filtered = ccData.logs.filter(l => {
     if (search && !((l.case_id||'').toLowerCase().includes(search) ||
                     (l.coordinator||'').toLowerCase().includes(search))) return false;
     if (action !== 'all' && l.action_type !== action) return false;
-    if (coord  !== 'all' && l.coordinator !== coord)  return false;
     return true;
   });
   document.getElementById('cc-history-list').innerHTML =
@@ -2234,33 +2267,176 @@ function exportFPY() {
   toast('Downloaded FPY export', 'ok');
 }
 
+function patientInitials(name) {
+  if (!name) return '';
+  return name.trim().split(/\s+/).map(p => p[0]).join('').toUpperCase().slice(0, 3);
+}
+
+// Render a single case as a card row with inline stage/hold dropdowns + delete.
+function renderCaseCard(c, allStages) {
+  const initials = patientInitials(c.patient_name);
+  const wfSlug = (c.workflow_type || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const holdBadge = c.hold_duration
+    ? '<span class="hold-badge">' + esc(c.hold_duration) + '</span>'
+    : '';
+  const wfBadge = c.workflow_type
+    ? '<span class="wf-badge ' + wfSlug + '">' + esc(c.workflow_type) + '</span>'
+    : '';
+  const dateNice = c.stage_updated_date
+    ? new Date(c.stage_updated_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' })
+    : '';
+  const stageOpts = allStages.map(s =>
+    '<option value="' + esc(s) + '"' + (s === c.current_stage ? ' selected' : '') + '>' + esc(s) + '</option>'
+  ).join('');
+  const holdOpts = HOLD_DURATIONS.map(h =>
+    '<option value="' + esc(h) + '"' + (h === (c.hold_duration || '') ? ' selected' : '') + '>' +
+      (h === '' ? '— Hold —' : esc(h)) + '</option>'
+  ).join('');
+  const caseIdEsc = esc(c.case_id);
+  return '<div class="cc-case-card">' +
+    '<div class="info">' +
+      '<div class="row1">' +
+        '<span class="cnum">' + caseIdEsc + '</span>' +
+        (initials ? '<span class="sep">·</span><span class="pname">' + esc(initials) + '</span>' : '') +
+        wfBadge + holdBadge +
+      '</div>' +
+      '<div class="meta">' + esc(c.coordinator || '-') + ' · ' + esc(dateNice || '-') + '</div>' +
+    '</div>' +
+    '<div class="controls">' +
+      '<select class="cc-inline-select" onchange="updateCaseInlineStage(\'' + caseIdEsc + '\', this.value)">' +
+        stageOpts +
+      '</select>' +
+      '<select class="cc-inline-select" onchange="updateCaseHoldDuration(\'' + caseIdEsc + '\', this.value)">' +
+        holdOpts +
+      '</select>' +
+      '<button class="cc-trash-btn" title="Delete case" onclick="deleteCaseFromTracker(\'' + caseIdEsc + '\')">' + TRASH_ICON + '</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderCaseCardList(cases) {
+  if (!cases.length) return '<div class="empty">No cases yet.</div>';
+  const allStages = [...new Set(ccData.cases.map(c => c.current_stage).filter(Boolean))].sort();
+  return cases.map(c => renderCaseCard(c, allStages)).join('');
+}
+
 function renderTracker() {
   if (!ccLoaded) return;
-  const wf = document.getElementById('track-workflow').value;
-  const st = document.getElementById('track-stage').value;
+  const wfEl = document.getElementById('track-workflow');
+  const stEl = document.getElementById('track-stage');
+  const wf = wfEl ? wfEl.value : 'all';
+  const st = stEl ? stEl.value : 'all';
   const filtered = ccData.cases.filter(c => {
     if (wf !== 'all' && c.workflow_type !== wf) return false;
     if (st !== 'all' && c.current_stage !== st) return false;
     return true;
   });
-  document.getElementById('track-count').textContent = filtered.length + ' case' + (filtered.length === 1 ? '' : 's');
-  if (!filtered.length) {
-    document.getElementById('cc-tracker-table').innerHTML = '<div class="empty">No cases match filters.</div>';
-    return;
+  const countEl = document.getElementById('track-count');
+  if (countEl) countEl.textContent = filtered.length + ' case' + (filtered.length === 1 ? '' : 's');
+
+  const list = document.getElementById('cc-tracker-list');
+  if (list) {
+    list.innerHTML = filtered.length
+      ? renderCaseCardList(filtered.slice(0, 200))
+      : '<div class="empty">No cases match filters.</div>';
   }
-  document.getElementById('cc-tracker-table').innerHTML =
-    '<table class="cc-table"><thead><tr><th>Case ID</th><th>Patient</th><th>Workflow</th><th>Stage</th><th>Coordinator</th><th>Updated</th><th>Mods</th></tr></thead><tbody>' +
-    filtered.slice(0, 200).map(c => {
-      const slug = (c.current_stage || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      return '<tr><td class="case-id-cell">' + esc(c.case_id) + '</td>' +
-        '<td>' + esc(c.patient_name || '-') + '</td>' +
-        '<td>' + esc(c.workflow_type || '') + '</td>' +
-        '<td><span class="cc-action-badge ' + slug + '">' + esc(c.current_stage || '') + '</span></td>' +
-        '<td>' + esc(c.coordinator || '-') + '</td>' +
-        '<td class="muted">' + esc(c.stage_updated_date || '') + '</td>' +
-        '<td>' + (c.design_change_count || 0) + (c.design_change_count >= 2 ? ' <span style="color:var(--red);font-weight:800;">⚠</span>' : '') + '</td></tr>';
-    }).join('') +
-    '</tbody></table>';
+
+  // Live tracker section under New Log form (unfiltered, most-recent first)
+  const newlog = document.getElementById('cc-newlog-tracker');
+  if (newlog) {
+    newlog.innerHTML = renderCaseCardList(ccData.cases.slice(0, 50));
+  }
+}
+
+function setTrackerSubTab(tab) {
+  trackerSubTab = tab;
+  document.getElementById('cc-subtab-tracker').classList.toggle('active', tab === 'tracker');
+  document.getElementById('cc-subtab-diagram').classList.toggle('active', tab === 'diagram');
+  document.getElementById('cc-tracker-panel').classList.toggle('hidden', tab !== 'tracker');
+  document.getElementById('cc-diagram-panel').classList.toggle('hidden', tab !== 'diagram');
+}
+
+async function addCaseToTracker() {
+  const caseId   = document.getElementById('track-case-id').value.trim();
+  const patient  = document.getElementById('track-patient').value.trim();
+  const workflow = document.getElementById('track-form-workflow').value;
+  const stage    = document.getElementById('track-form-stage').value;
+  const coord    = document.getElementById('track-form-coord').value;
+  const dt       = document.getElementById('track-form-date').value;
+  const notes    = document.getElementById('track-form-notes').value.trim();
+  if (!caseId || !workflow || !stage) {
+    toast('Case ID, workflow, and stage are required', 'err'); return;
+  }
+  try {
+    await upsertCase({
+      case_id: caseId,
+      patient_name: patient || undefined,
+      workflow_type: workflow,
+      current_stage: stage,
+      coordinator: coord || undefined,
+      stage_updated_date: dt || pacificDate(),
+      notes: notes || undefined,
+    });
+    toast('Case saved', 'ok');
+    document.getElementById('track-case-id').value = '';
+    document.getElementById('track-patient').value = '';
+    document.getElementById('track-form-notes').value = '';
+    await reloadCcData();
+  } catch (e) {
+    toast('Save failed: ' + (e.message || e), 'err');
+  }
+}
+
+async function updateCaseInlineStage(caseId, newStage) {
+  try {
+    await upsertCase({
+      case_id: caseId,
+      current_stage: newStage,
+      stage_updated_date: pacificDate(),
+    });
+    toast('Stage updated', 'ok');
+    await reloadCcData();
+  } catch (e) { toast('Update failed: ' + (e.message || e), 'err'); }
+}
+
+async function updateCaseHoldDuration(caseId, newDuration) {
+  try {
+    if (inCowork) {
+      await runMcpSql('UPDATE "Case" SET hold_duration = ' + sqlVal(newDuration || null) +
+        " WHERE case_id = '" + caseId.replace(/'/g,"''") + "'");
+    } else {
+      const cfg = getConfig();
+      const res = await fetch(cfg.url + '/rest/v1/Case?case_id=eq.' + encodeURIComponent(caseId), {
+        method: 'PATCH',
+        headers: {
+          apikey: cfg.key, Authorization: 'Bearer '+cfg.key,
+          'Content-Type': 'application/json', Prefer: 'return=minimal',
+        },
+        body: JSON.stringify({ hold_duration: newDuration || null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    }
+    toast('Hold updated', 'ok');
+    await reloadCcData();
+  } catch (e) { toast('Update failed: ' + (e.message || e), 'err'); }
+}
+
+async function deleteCaseFromTracker(caseId) {
+  if (!confirm('Delete case ' + caseId + ' from tracker?')) return;
+  try {
+    if (inCowork) {
+      await runMcpSql("DELETE FROM \"Case\" WHERE case_id = '" + caseId.replace(/'/g,"''") + "'");
+    } else {
+      const cfg = getConfig();
+      const res = await fetch(cfg.url + '/rest/v1/Case?case_id=eq.' + encodeURIComponent(caseId), {
+        method: 'DELETE',
+        headers: { apikey: cfg.key, Authorization: 'Bearer '+cfg.key },
+      });
+      if (!res.ok) throw new Error(await res.text());
+    }
+    toast('Case deleted', 'ok');
+    await reloadCcData();
+  } catch (e) { toast('Delete failed: ' + (e.message || e), 'err'); }
 }
 
 function renderCoordinators() {
@@ -2276,21 +2452,95 @@ function renderCoordinators() {
   ).join('');
 }
 
+function sqlVal(v) {
+  return (v == null || v === '') ? 'NULL' : "'" + String(v).replace(/'/g,"''") + "'";
+}
+
+// Generate a 24-char lowercase hex id to match the existing format on
+// "Case"/"CaseLog"/"Coordinator" (those tables have text id columns without
+// a DB default, so the client has to supply one on INSERT).
+function genId() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Upsert a row into the "Case" table keyed by case_id. PK is "id" (text) and
+// case_id has no unique constraint, so we look up an existing row in memory
+// then either PATCH by id (update) or POST a fresh row with a generated id.
+// Only non-empty fields are written so callers can't blank out other columns.
+async function upsertCase(fields) {
+  if (!fields || !fields.case_id) return;
+  const f = { ...fields, updated_date: fields.updated_date || pacificDate() };
+  const body = {};
+  Object.keys(f).forEach(k => {
+    if (f[k] !== undefined && f[k] !== '' && f[k] !== null) body[k] = f[k];
+  });
+  if (!Object.keys(body).length) return;
+
+  const existing = (ccData.cases || []).find(c => c.case_id === fields.case_id);
+
+  if (existing && existing.id) {
+    const update = { ...body };
+    delete update.case_id;
+    if (!Object.keys(update).length) return;
+    if (inCowork) {
+      const setClause = Object.keys(update).map(c => '"' + c + '" = ' + sqlVal(update[c])).join(', ');
+      await runMcpSql('UPDATE "Case" SET ' + setClause + ' WHERE id = ' + sqlVal(existing.id));
+    } else {
+      const cfg = getConfig();
+      const res = await fetch(cfg.url + '/rest/v1/Case?id=eq.' + encodeURIComponent(existing.id), {
+        method: 'PATCH',
+        headers: {
+          apikey: cfg.key, Authorization: 'Bearer '+cfg.key,
+          'Content-Type': 'application/json', Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(update),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    }
+  } else {
+    body.id = genId();
+    if (inCowork) {
+      const cols = Object.keys(body);
+      const colList = cols.map(c => '"' + c + '"').join(', ');
+      const valList = cols.map(c => sqlVal(body[c])).join(', ');
+      await runMcpSql('INSERT INTO "Case" (' + colList + ') VALUES (' + valList + ')');
+    } else {
+      const cfg = getConfig();
+      const res = await fetch(cfg.url + '/rest/v1/Case', {
+        method: 'POST',
+        headers: {
+          apikey: cfg.key, Authorization: 'Bearer '+cfg.key,
+          'Content-Type': 'application/json', Prefer: 'return=minimal',
+        },
+        body: JSON.stringify([body]),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    }
+  }
+}
+
 async function submitLog() {
-  const caseId = document.getElementById('log-case-id').value.trim();
-  const action = document.getElementById('log-action-type').value;
-  const coord  = document.getElementById('log-coordinator').value;
-  const dt     = document.getElementById('log-date').value;
-  const notes  = document.getElementById('log-notes').value.trim();
+  const caseId   = document.getElementById('log-case-id').value.trim();
+  const action   = document.getElementById('log-action-type').value;
+  const coord    = document.getElementById('log-coordinator').value;
+  const dt       = document.getElementById('log-date').value;
+  const notes    = document.getElementById('log-notes').value.trim();
+  const patient  = document.getElementById('log-patient').value.trim();
+  const workflow = document.getElementById('log-workflow').value;
+  const stage    = document.getElementById('log-stage').value;
   if (!caseId || !action) { toast('Case ID and action are required', 'err'); return; }
   const row = {
+    id: genId(),
     case_id: caseId, action_type: action,
     coordinator: coord || null, log_date: dt || pacificDate(),
     notes: notes || null,
   };
   try {
     if (inCowork) {
-      await runMcpSql("INSERT INTO \"CaseLog\" (case_id, action_type, coordinator, log_date, notes, created_date) VALUES (" +
+      await runMcpSql("INSERT INTO \"CaseLog\" (id, case_id, action_type, coordinator, log_date, notes, created_date) VALUES (" +
+        "'" + row.id + "', " +
         "'" + caseId.replace(/'/g,"''") + "', " +
         "'" + action.replace(/'/g,"''") + "', " +
         (coord ? "'" + coord.replace(/'/g,"''") + "'" : 'NULL') + ", " +
@@ -2305,9 +2555,18 @@ async function submitLog() {
       });
       if (!res.ok) throw new Error(await res.text());
     }
+    await upsertCase({
+      case_id: caseId,
+      patient_name: patient || undefined,
+      workflow_type: workflow || undefined,
+      current_stage: stage || undefined,
+      coordinator: coord || undefined,
+      stage_updated_date: dt || pacificDate(),
+    });
     toast('Log saved', 'ok');
     document.getElementById('log-case-id').value = '';
     document.getElementById('log-notes').value   = '';
+    document.getElementById('log-patient').value = '';
     await reloadCcData();
   } catch (e) {
     toast('Save failed: ' + (e.message || e), 'err');
@@ -3027,8 +3286,10 @@ Object.assign(window, {
   // Outreach panels
   lookupCase, submitFeedback, submitRequest,
   // Case Coordination
-  setCaseTab, submitLog, exportFPY,
+  setCaseTab, submitLog, exportFPY, deleteLogEntry,
+  setTrackerSubTab, addCaseToTracker,
+  updateCaseInlineStage, updateCaseHoldDuration, deleteCaseFromTracker,
   renderDashboard, renderHistory, renderTracker, renderPrefsList,
-  removeCoord, selectPrefAcct, savePrefs, extractPrefsWithAI, bulkExtractPrefs,
+  addCoordinator, removeCoord, selectPrefAcct, savePrefs, extractPrefsWithAI, bulkExtractPrefs,
   generatePrefSummaries,
 });
