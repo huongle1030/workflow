@@ -3,6 +3,7 @@
 // =====================================================================
 import './auth.css';
 import { initAuth, getCurrentEmployee, signOut as authSignOut, getAccessToken } from './auth.js';
+import { can, CAPABILITIES } from './permissions.js';
 
 // =====================================================================
 // Configuration
@@ -873,6 +874,13 @@ const OUTBOUND_FILTER_OPTIONS = [
   { value: 'mid',     label: '$2k–5k' },
   { value: 'low',     label: 'Under $2k' },
 ];
+// Revenue tiers are hidden from roles without the `outbound.revenue` capability
+// (design_approver). Returns the filter options that role may actually use.
+const REVENUE_FILTER_VALUES = ['high', 'mid', 'low'];
+function visibleOutboundFilterOptions() {
+  if (can(CAPABILITIES.OUTBOUND_REVENUE)) return OUTBOUND_FILTER_OPTIONS;
+  return OUTBOUND_FILTER_OPTIONS.filter(o => !REVENUE_FILTER_VALUES.includes(o.value));
+}
 
 function setOutboundRevenue(value) {
   outboundFilter.revenue = value;
@@ -1080,7 +1088,8 @@ function renderOutbound() {
   // Button label + bubble
   const btnLabelEl = document.getElementById('outbound-filter-label');
   const btnCountEl = document.getElementById('outbound-filter-count');
-  const currentOpt = OUTBOUND_FILTER_OPTIONS.find(o => o.value === current) || OUTBOUND_FILTER_OPTIONS[0];
+  const filterOptions = visibleOutboundFilterOptions();
+  const currentOpt = filterOptions.find(o => o.value === current) || filterOptions[0];
   if (btnLabelEl) btnLabelEl.textContent = currentOpt.label;
   if (btnCountEl) {
     const c = counts[currentOpt.value] ?? 0;
@@ -1090,7 +1099,7 @@ function renderOutbound() {
   // Menu items
   const menuEl = document.getElementById('outbound-filter-menu');
   if (menuEl) {
-    menuEl.innerHTML = OUTBOUND_FILTER_OPTIONS.map(o => {
+    menuEl.innerHTML = filterOptions.map(o => {
       const c = counts[o.value] ?? 0;
       const sel = o.value === current ? ' selected' : '';
       const zero = c === 0 ? ' zero' : '';
@@ -1117,7 +1126,8 @@ function renderOutbound() {
     const rev = Number(r.case_revenue || 0);
     const revClass = rev >= 5000 ? 'high' : rev >= 2000 ? 'mid' : '';
     const revStr = rev > 0 ? '$' + rev.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '';
-    const revenueChip = revStr ? '<span class="revenue-chip ' + revClass + '">' + revStr + '</span>' : '';
+    const revenueChip = (can(CAPABILITIES.OUTBOUND_REVENUE) && revStr)
+      ? '<span class="revenue-chip ' + revClass + '">' + revStr + '</span>' : '';
     // Strategic partner chip — colored by partner family for fast recognition
     const sp = r.strategic_partner || '';
     let spClass = '';
@@ -2172,8 +2182,12 @@ function switchMode(mode) {
   document.querySelectorAll('#tabs-outreach .tab, #tabs-cc .tab').forEach(t => t.classList.remove('active'));
 
   if (mode === 'outreach') {
-    document.getElementById('panel-outbound').classList.remove('hidden');
-    document.querySelector('#tabs-outreach .tab[data-tab="outbound"]').classList.add('active');
+    // Default to the markup's "outbound" tab, but fall back to the first tab
+    // this role is actually allowed to see (e.g. case_entry lands on Submit).
+    const first = firstPermittedOutreachTab();
+    document.getElementById('panel-' + first).classList.remove('hidden');
+    document.querySelector(`#tabs-outreach .tab[data-tab="${first}"]`)?.classList.add('active');
+    runTabSideEffects(first);
     document.querySelector('.brand-text .sub').textContent = 'Spectrum Killian · Coordinator Inbox';
     document.getElementById('check-outreach').style.display = 'inline';
     document.getElementById('check-cc').style.display = 'none';
@@ -2190,9 +2204,112 @@ function switchMode(mode) {
   // The KPI strip + search bar are scoped to the outreach app
   const kpiStrip = document.getElementById('kpi-strip');
   const searchRow = document.getElementById('global-search-row');
-  if (kpiStrip)  kpiStrip.style.display  = (mode === 'outreach') ? '' : 'none';
+  // KPI strip is also gated by the `metrics` capability (hidden for
+  // design_approver / case_entry even within the outreach app).
+  if (kpiStrip)  kpiStrip.style.display  = (mode === 'outreach' && can(CAPABILITIES.METRICS)) ? '' : 'none';
   if (searchRow) searchRow.style.display = (mode === 'outreach') ? '' : 'none';
   if (mode === 'outreach' && typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
+}
+
+// =====================================================================
+// Role-based access control (Design Approvals / outreach app only)
+// =====================================================================
+// Maps each #tabs-outreach tab (data-tab) to its capability key. Tabs not
+// listed here (e.g. "feedback") are never gated — visible to all approved users.
+const TAB_CAP = {
+  submit:     CAPABILITIES.TAB_SUBMIT,
+  outbound:   CAPABILITIES.TAB_OUTBOUND,
+  inbound:    CAPABILITIES.TAB_INBOUND,
+  ready:      CAPABILITIES.TAB_READY,
+  reschedule: CAPABILITIES.TAB_RESCHEDULE,
+  lookup:     CAPABILITIES.TAB_LOOKUP,
+  audit:      CAPABILITIES.TAB_AUDIT,
+  editlog:    CAPABILITIES.TAB_EDITLOG,
+};
+
+// True if the current role may see this outreach tab. Ungated tabs (no entry
+// in TAB_CAP, e.g. feedback) are always allowed.
+function isOutreachTabPermitted(which) {
+  const cap = TAB_CAP[which];
+  return cap ? can(cap) : true;
+}
+
+// First permitted outreach tab in DOM order — used as the landing tab for roles
+// whose default ("outbound") is hidden (e.g. case_entry lands on Submit).
+function firstPermittedOutreachTab() {
+  const tabs = document.querySelectorAll('#tabs-outreach .tab');
+  for (const t of tabs) {
+    if (isOutreachTabPermitted(t.dataset.tab)) return t.dataset.tab;
+  }
+  return 'submit'; // every role has Submit, but fall back defensively
+}
+
+// Per-tab work that must run when a tab becomes active.
+function runTabSideEffects(which) {
+  // Re-render the Ready tab on open so the "In queue?" column reflects any
+  // drafts the cron has composed since the last refresh.
+  if (which === 'ready') renderReady();
+  if (which === 'editlog') loadEditLog();
+  if (which === 'feedback') loadFeedback();
+  if (typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
+}
+
+// Hide every tab/control the current role isn't allowed to see, then make sure
+// the active tab is one they can actually open. Called once after sign-in
+// approval (boot) — see initAuth callback.
+function applyPermissions() {
+  // 1) Hide non-permitted outreach tabs (the `hidden` class is the pattern
+  //    already used elsewhere on tabs/panels).
+  document.querySelectorAll('#tabs-outreach .tab').forEach(tab => {
+    tab.classList.toggle('hidden', !isOutreachTabPermitted(tab.dataset.tab));
+  });
+
+  // 2) Metrics: KPI strip + the appbar "Metrics" button.
+  const allowMetrics = can(CAPABILITIES.METRICS);
+  const kpiStrip = document.getElementById('kpi-strip');
+  if (kpiStrip && !allowMetrics) kpiStrip.style.display = 'none';
+  document.getElementById('metrics-btn')?.classList.toggle('hidden', !allowMetrics);
+  document.getElementById('metrics-sep')?.classList.toggle('hidden', !allowMetrics);
+
+  // 3) Pending Outbound revenue features (chip/sort/filter).
+  applyOutboundRevenuePermission();
+
+  // 4) If the currently-active outreach tab isn't permitted, land on the first
+  //    one that is.
+  const active = document.querySelector('#tabs-outreach .tab.active')?.dataset.tab;
+  if (currentMode === 'outreach' && (!active || !isOutreachTabPermitted(active))) {
+    activateOutreachTab(firstPermittedOutreachTab());
+  }
+}
+
+// Activate an outreach tab programmatically (same effect as a click), used by
+// switchMode/applyPermissions. Ignores tabs the role can't open.
+function activateOutreachTab(which) {
+  if (!isOutreachTabPermitted(which)) return;
+  document.querySelectorAll('#tabs-outreach .tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`#tabs-outreach .tab[data-tab="${which}"]`)?.classList.add('active');
+  OUTREACH_PANELS.forEach(p => {
+    document.getElementById('panel-' + p).classList.toggle('hidden', p !== which);
+  });
+  runTabSideEffects(which);
+}
+
+// Strip revenue chip/sort/filter for roles without `outbound.revenue`
+// (design_approver). Idempotent: safe to call more than once.
+function applyOutboundRevenuePermission() {
+  if (can(CAPABILITIES.OUTBOUND_REVENUE)) return;
+  // Remove the two revenue sort <option>s and switch off a revenue default.
+  const sortSel = document.getElementById('outbound-sort');
+  if (sortSel) {
+    sortSel.querySelectorAll('option[value="revenue_desc"], option[value="revenue_asc"]')
+      .forEach(o => o.remove());
+    if (outboundFilter.sort === 'revenue_desc' || outboundFilter.sort === 'revenue_asc') {
+      outboundFilter.sort = 'oldest';
+    }
+    sortSel.value = outboundFilter.sort;
+  }
+  // Clear any revenue filter tier that may have been selected.
+  if (['high', 'mid', 'low'].includes(outboundFilter.revenue)) outboundFilter.revenue = '';
 }
 
 // =====================================================================
@@ -2200,18 +2317,16 @@ function switchMode(mode) {
 // =====================================================================
 document.querySelectorAll('#tabs-outreach .tab').forEach(tab => {
   tab.addEventListener('click', () => {
+    const which = tab.dataset.tab;
+    // Guard: ignore clicks on tabs this role isn't allowed to open (covers any
+    // stale DOM / keyboard path that reaches a hidden tab).
+    if (!isOutreachTabPermitted(which)) return;
     document.querySelectorAll('#tabs-outreach .tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    const which = tab.dataset.tab;
     OUTREACH_PANELS.forEach(p => {
       document.getElementById('panel-' + p).classList.toggle('hidden', p !== which);
     });
-    // Re-render the Ready tab on open so the "In queue?" column reflects
-    // any drafts the cron has composed since the last refresh.
-    if (which === 'ready') renderReady();
-    if (which === 'editlog') loadEditLog();
-    if (which === 'feedback') loadFeedback();
-    if (typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
+    runTabSideEffects(which);
   });
 });
 document.querySelectorAll('#tabs-cc .tab').forEach(tab => {
@@ -3955,6 +4070,10 @@ function boot() {
   if (currentMode === 'cc') switchMode('cc');
   else switchMode('outreach');
 
+  // Hide tabs/controls this role isn't allowed to see, and land on a permitted
+  // tab. Runs after switchMode so it can correct the active tab if needed.
+  applyPermissions();
+
   // First-time visitors get the tour automatically (after the panels settle)
   if (!localStorage.getItem('skdla_tour_complete')) {
     setTimeout(() => { if (!tourActive) startTour(); }, 600);
@@ -3972,6 +4091,9 @@ initAuth(() => boot());
 let metricsRows = null;
 
 async function openMetrics() {
+  // Capability guard — design_approver / case_entry can't open Metrics even if
+  // an onclick path reached this function.
+  if (!can(CAPABILITIES.METRICS)) return;
   const modal = document.getElementById('metrics-modal');
   if (!modal) return;
   modal.classList.add('open');

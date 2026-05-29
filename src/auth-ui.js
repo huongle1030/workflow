@@ -4,7 +4,6 @@ import {
   signInWithMicrosoft,
   signOut,
   createEmployeeRecord,
-  refreshEmployeeStatus,
   getCurrentUser,
 } from './auth.js';
 
@@ -116,8 +115,20 @@ export function showPendingScreen() {
     <button class="auth-btn auth-btn-primary" id="auth-refresh">Check again</button>
     <button class="auth-link" id="auth-signout">Sign out</button>
   `);
-  document.getElementById('auth-refresh').addEventListener('click', refreshEmployeeStatus);
+  document.getElementById('auth-refresh').addEventListener('click', onCheckAgain);
   document.getElementById('auth-signout').addEventListener('click', signOut);
+}
+
+// Reload the page so the full auth check (initAuth -> routeFromSession) re-runs
+// from a clean state. Re-checking in-place could hang on a slow/stuck Supabase
+// call and leave the button spinning with no feedback; a reload always resolves.
+function onCheckAgain() {
+  const btn = document.getElementById('auth-refresh');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+  }
+  window.location.reload();
 }
 
 export function showRejectedScreen() {

@@ -13,12 +13,15 @@ import {
 const ALLOWED_DOMAIN = 'skdla.com';
 const APP_NAME = 'caseCoord_designApprovals';
 
+// Roles a new hire may self-request on the role-selection screen.
+// NOTE: `admin` and `executive` are intentionally excluded — they are assigned
+// by an admin directly in the Supabase `employees` table, never self-requested.
+// The full role list + labels live in permissions.js (ROLES / ROLE_LABELS).
 export const ROLE_OPTIONS = [
   { value: 'design_approver',  label: 'Design Approver' },
-  { value: 'case_entry',       label: 'Case Entry' },
+  { value: 'case_entry',       label: 'Case Entry/Review' },
   { value: 'account_manager',  label: 'Account Manager' },
   { value: 'manager',          label: 'Manager' },
-  { value: 'operations_lead',  label: 'Operations Lead' },
 ];
 
 let currentUser = null;
@@ -87,12 +90,15 @@ export async function initAuth(onApproved) {
   });
 }
 
+// Resolves the current session to a screen and returns a status string so
+// callers (e.g. the pending screen's "Check again" button) can react when the
+// status hasn't changed.
 async function routeFromSession(session) {
   if (!session || !session.user) {
     currentUser = null;
     currentEmployee = null;
     showLoginScreen();
-    return;
+    return 'logged-out';
   }
 
   const user = session.user;
@@ -102,7 +108,7 @@ async function routeFromSession(session) {
   if (!email.endsWith('@' + ALLOWED_DOMAIN)) {
     await supabase.auth.signOut();
     showLoginScreen('Only @' + ALLOWED_DOMAIN + ' accounts are allowed.');
-    return;
+    return 'wrong-domain';
   }
 
   currentUser = user;
@@ -114,21 +120,22 @@ async function routeFromSession(session) {
 
   if (!employee) {
     showRoleSelectionScreen(user);
-    return;
+    return 'role-selection';
   }
   if (employee.active === false) {
     showRejectedScreen();
-    return;
+    return 'rejected';
   }
   if (employee.role_approval === true && employee.active !== false) {
     await updateLoginTime(user.id);
     hideAuthOverlay();
     startIdleTimer();
     if (onApprovedCallback) onApprovedCallback(employee);
-    return;
+    return 'approved';
   }
   // Pending: row exists but not yet approved
   showPendingScreen();
+  return 'pending';
 }
 
 export async function signInWithMicrosoft() {
@@ -213,8 +220,9 @@ async function updateLoginTime(userId) {
   if (error) console.warn('[auth] updateLoginTime failed:', error);
 }
 
-// Manual refresh — used by the pending screen's "Check again" button
+// Manual refresh — used by the pending screen's "Check again" button.
+// Returns the resolved status so the UI can give feedback when nothing changed.
 export async function refreshEmployeeStatus() {
   const { data: { session } } = await supabase.auth.getSession();
-  await routeFromSession(session);
+  return routeFromSession(session);
 }
