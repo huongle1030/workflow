@@ -1872,6 +1872,9 @@
     font-size: 14px; font-family: inherit;
   }
   .form-row textarea { min-height: 110px; resize: vertical; }
+  .form-row input[type="text"]::placeholder, .form-row textarea::placeholder {
+    color: var(--slate); opacity: 1;
+  }
   .form-row .help {
     font-size: 11px; color: var(--slate); margin-top: 4px; line-height: 1.4;
   }
@@ -3332,9 +3335,9 @@
 
     <div class="form-row">
       <label>Details (one bullet per line)</label>
-      <textarea id="req-details" placeholder="Current scans show blood/tissue around the prep margins
-Please isolate the prep site and rescan
-We need clean margins to proceed"></textarea>
+      <textarea id="req-details" placeholder="e.g. Current IO scans show blood/tissue on the prep margins
+Please isolate the prep site and retake the scan
+Clean margins are needed before we can proceed with the design"></textarea>
       <div class="help">Each non-empty line becomes a bullet in the doctor's email. Leave blank for Design Approval requests.</div>
     </div>
 
