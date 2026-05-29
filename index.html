@@ -5,7 +5,7 @@
 <title>Design Approvals · Coordinator Inbox</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
@@ -40,9 +40,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-  /* Lora (serif) is used for body content in email previews and prefs text */
+  /* Body content in email previews and prefs text — kept on Montserrat for consistency */
   .preview, .prefs-banner .text, .preview-subject + *,
-  .email-body-editor { font-family: 'Lora', Georgia, serif; }
+  .email-body-editor { font-family: 'Montserrat', sans-serif; }
   a { color: var(--blue); }
 
   /* App bar */
@@ -344,7 +344,7 @@
   /* Section */
   .panel { padding: 4px 28px 28px; }
   .panel h2 {
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
     font-size: 20px; color: var(--navy);
     margin-bottom: 8px; font-weight: 600; letter-spacing: 0;
   }
@@ -934,7 +934,7 @@
     border-radius: 14px; padding: 28px 24px; margin-bottom: 22px;
   }
   .wf-diagram h3 {
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
     font-size: 17px; color: var(--navy);
     margin-bottom: 22px;
   }
@@ -1000,7 +1000,7 @@
     margin-bottom: 8px;
   }
   .tour-tooltip h3 {
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
     font-size: 19px;
     color: var(--navy);
     margin-bottom: 8px;
@@ -1071,7 +1071,7 @@
     background: var(--white); border: 1px solid var(--slate-light);
     border-radius: 6px; padding: 14px 16px;
     font-size: 14px; line-height: 1.55;
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
     white-space: pre-wrap;
     max-height: 240px; overflow-y: auto;
   }
@@ -1094,7 +1094,7 @@
     padding: 12px 14px;
     font-size: 12px;
     color: var(--slate);
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
     max-height: 280px; overflow-y: auto;
     white-space: pre-wrap;
   }
@@ -1332,7 +1332,7 @@
     box-shadow: 0 20px 60px rgba(0,0,0,0.3);
   }
   .config-box h3 {
-    font-family: 'Lora', Georgia, serif; color: var(--navy);
+    font-family: 'Montserrat', sans-serif; color: var(--navy);
     font-size: 22px; margin-bottom: 6px;
   }
   .config-box .sub-help {
@@ -1951,7 +1951,7 @@
   .edit-diff {
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     font-size: 13px; line-height: 1.5;
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
   }
   .edit-before, .edit-after {
     padding: 10px 12px; border-radius: 6px;
@@ -2130,7 +2130,7 @@
     border-radius: 10px 10px 0 0;
   }
   .modal-header h3 {
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
     font-size: 18px; font-weight: 600; margin: 0;
   }
   .modal-close {
@@ -2206,7 +2206,7 @@
     text-transform: uppercase; color: var(--slate);
   }
   .metrics-summary-tile .value {
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
     font-size: 22px; font-weight: 600; color: var(--navy);
     line-height: 1.1;
   }
@@ -2304,7 +2304,7 @@
   }
   .metrics-empty {
     padding: 60px 20px; text-align: center;
-    color: var(--slate); font-family: 'Lora', Georgia, serif;
+    color: var(--slate); font-family: 'Montserrat', sans-serif;
   }
 
   /* ===== Reschedule bucket chips + per-row action ===== */
@@ -2342,7 +2342,7 @@
     border-radius: 8px;
     padding: 14px 18px;
     margin: 12px 0 16px;
-    font-family: 'Lora', Georgia, serif;
+    font-family: 'Montserrat', sans-serif;
   }
   .case-summary-label {
     font-family: 'Montserrat', sans-serif;
@@ -2365,7 +2365,7 @@
       display: block;
       position: absolute; top: 0; left: 0;
       width: 100%; padding: 32px 40px;
-      font-family: 'Lora', Georgia, serif;
+      font-family: 'Montserrat', sans-serif;
       color: #1F2937;
     }
     .call-notes-print .cnp-header {
@@ -2389,7 +2389,7 @@
       font-family: 'Montserrat', sans-serif;
     }
     .call-notes-print h2 {
-      font-family: 'Lora', Georgia, serif;
+      font-family: 'Montserrat', sans-serif;
       font-size: 24px; color: #052030;
       margin: 0 0 16px;
     }
@@ -2436,7 +2436,7 @@
       margin-bottom: 12px;
       page-break-inside: avoid;
       background: #FBFCFD;
-      font-family: 'Lora', Georgia, serif;
+      font-family: 'Montserrat', sans-serif;
     }
     .call-notes-print .cnp-event-head {
       display: flex; justify-content: space-between; align-items: baseline;
@@ -3311,7 +3311,7 @@
     </div>
     <button class="submit-btn" onclick="submitFeedback()">Submit Feedback</button>
   </div>
-  <h3 style="font-family: 'Lora', Georgia, serif; font-size: 16px; color: var(--navy); margin-bottom: 12px; font-weight: 600;">Recent submissions</h3>
+  <h3 style="font-family: 'Montserrat', sans-serif; font-size: 16px; color: var(--navy); margin-bottom: 12px; font-weight: 600;">Recent submissions</h3>
   <div id="list-feedback"><div class="loading">Loading…</div></div>
 </div>
 

@@ -3441,7 +3441,7 @@ function selectPrefAcct(acctNum) {
   ed.innerHTML =
     '<div class="cc-form-card" style="max-width:none;">' +
       '<div style="font-size:11px; font-weight:800; color:var(--slate); letter-spacing:2px; text-transform:uppercase; margin-bottom:4px;">' + esc(p.account_number) + '</div>' +
-      '<div style="font-family:Georgia,serif; font-size:22px; font-weight:bold; color:var(--navy); margin-bottom:14px;">' + esc(p.practice_name || '-') + aiBadge + '</div>' +
+      '<div style="font-family:\'Montserrat\',sans-serif; font-size:22px; font-weight:bold; color:var(--navy); margin-bottom:14px;">' + esc(p.practice_name || '-') + aiBadge + '</div>' +
       flagBanner +
       '<div class="cc-form-grid">' +
         '<div><label>Preferred Tooth Library</label><input id="pe-lib" class="cc-input" value="' + esc(p.preferred_tooth_library || '') + '" placeholder="e.g. Phonares S81" /></div>' +
