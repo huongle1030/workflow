@@ -10,6 +10,16 @@ import { initAuth, getCurrentEmployee, signOut as authSignOut, getAccessToken } 
 const PROJECT_ID = import.meta.env.VITE_SUPABASE_PROJECT_ID ?? '';
 const MCP_SQL = 'mcp__8dd16a38-98a9-4842-82ed-37fbae8919ae__execute_sql';
 const REVIEWER = import.meta.env.VITE_REVIEWER ?? 'coordinator@skdla';
+
+// Identity of the Microsoft (SSO) account currently signed in. Used to stamp
+// submissions/reviews with the real login account alongside any name the user
+// typed/selected — so borrowed-account use is traceable.
+function loginIdentity() {
+  const e = getCurrentEmployee() || {};
+  const name = e.name || e.email || 'Unknown';
+  const email = e.email || null;
+  return { name, email };
+}
 const SUPABASE_DEFAULT_URL = import.meta.env.VITE_SUPABASE_URL ?? '';
 const SUPABASE_DEFAULT_KEY = import.meta.env.VITE_SUPABASE_KEY ?? '';
 const ANTHROPIC_DEFAULT_KEY = import.meta.env.VITE_ANTHROPIC_KEY ?? '';
@@ -393,18 +403,19 @@ async function submitFeedback() {
   const by = document.getElementById('fb-by').value.trim() || null;
   if (!message) { toast('Please write a message', 'err'); return; }
   try {
+    const me = loginIdentity();
     if (inCowork) {
       const q = v => v ? "'" + String(v).replace(/'/g, "''") + "'" : 'NULL';
       await runMcpSql(
-        "INSERT INTO coordinator_feedback (submitted_by, category, message, case_number) " +
-        "VALUES (" + q(by) + ", " + q(category) + ", " + q(message) + ", " + q(caseNum) + ")"
+        "INSERT INTO coordinator_feedback (submitted_by, category, message, case_number, login_name, login_email) " +
+        "VALUES (" + q(by) + ", " + q(category) + ", " + q(message) + ", " + q(caseNum) + ", " + q(me.name) + ", " + q(me.email) + ")"
       );
     } else {
       const cfg = getConfig();
       await fetch(cfg.url + '/rest/v1/coordinator_feedback', {
         method: 'POST',
         headers: { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-        body: JSON.stringify({ submitted_by: by, category, message, case_number: caseNum }),
+        body: JSON.stringify({ submitted_by: by, category, message, case_number: caseNum, login_name: me.name, login_email: me.email }),
       });
     }
     toast('Thanks! Feedback submitted.', 'ok');
@@ -732,10 +743,25 @@ function esc(s) {
 // same job, so the in-body version is redundant noise.
 const EXOCAD_URL_RE = /https?:\/\/webview\.exocad\.com\/v\/[A-Za-z0-9_\-/?=&%.+:#]+/g;
 const EXOCAD_BTN_TEXT_RE = /view\s+design\s+in\s+exocad(\s+webview)?/i;
+// Boilerplate sentence to strip from every outbound body.
+const STRIP_LINE_RE = /please\s+refer\s+to\s+your\s+original\s+rx\s+submission\s+for\s+the\s+full\s+list\s+of\s+instructions\.?/i;
 function linkifyExocad(html) {
   if (!html) return html;
   const container = document.createElement('div');
   container.innerHTML = html;
+
+  // Remove the "Please refer to your original RX submission..." boilerplate line.
+  // Drop the whole element when it only holds that sentence, otherwise just the text.
+  for (const el of Array.from(container.querySelectorAll('p, div, li, span'))) {
+    if (STRIP_LINE_RE.test(el.textContent || '')) {
+      const stripped = (el.textContent || '').replace(STRIP_LINE_RE, '').trim();
+      if (!stripped && !el.querySelector('a, img, button')) {
+        el.remove();
+      } else {
+        el.innerHTML = el.innerHTML.replace(STRIP_LINE_RE, '');
+      }
+    }
+  }
 
   // Remove the in-body styled button(s) that link to exocad.
   // Targets any <a> whose visible text matches "View Design in exocad[ WebView]".
@@ -1355,8 +1381,10 @@ function prettifyReplyText(text) {
   return s.trim();
 }
 
-// Filter state for Pending Replies (persists for the session)
-const inboundFilter = { search: '', classification: '' };
+// Filter state for Pending Replies (persists for the session).
+// `status` filters on AI classification; `caseLink` filters on case linkage.
+// The two columns combine as an AND.
+const inboundFilter = { search: '', status: '', caseLink: '' };
 
 // ---------- Hidden senders blocklist (persisted in localStorage) ----------
 const HIDDEN_SENDERS_KEY = 'skdla_hidden_senders';
@@ -1438,27 +1466,47 @@ function renderHiddenSendersList() {
   `).join('');
 }
 
-// Inbound filter options shared by the custom dropdown.
-// Special values: 'linked_only' and 'needs_lookup' filter by case-linkage
-// instead of by AI classification.
-const INBOUND_FILTER_OPTIONS = [
+// Friendly display labels for AI classifications — used by both the Status
+// dropdown and the per-reply chip so wording stays consistent.
+const AI_CLASS_LABELS = {
+  approved:                    'Approved',
+  approved_with_mods:          'Approved + Modifications',
+  modification:                'Modification',
+  pricing_or_product_question: 'Pricing/Product Questions',
+  other:                       'Other',
+  unclear:                     'Unclear',
+};
+function aiClassLabel(v) { return AI_CLASS_LABELS[v] || v || 'Unclear'; }
+
+// Status column — filters by AI classification.
+const INBOUND_STATUS_OPTIONS = [
   { value: '',                              label: 'All' },
-  { value: 'linked_only',                   label: 'Linked cases only' },
-  { value: 'needs_lookup',                  label: 'Needs case lookup' },
-  { value: 'approved',                      label: 'Approved' },
-  { value: 'modification',                  label: 'Modification' },
-  { value: 'approved_with_mods',            label: 'Approved + Mods' },
-  { value: 'pricing_or_product_question',   label: 'Pricing / Product Q' },
-  { value: 'other',                         label: 'Other' },
-  { value: 'unclear',                       label: 'Unclear' },
+  { value: 'approved',                      label: AI_CLASS_LABELS.approved },
+  { value: 'approved_with_mods',            label: AI_CLASS_LABELS.approved_with_mods },
+  { value: 'modification',                  label: AI_CLASS_LABELS.modification },
+  { value: 'pricing_or_product_question',   label: AI_CLASS_LABELS.pricing_or_product_question },
+  { value: 'other',                         label: AI_CLASS_LABELS.other },
+  { value: 'unclear',                       label: AI_CLASS_LABELS.unclear },
+];
+
+// Case Number column — filters by case linkage. Combines with Status as an AND.
+const INBOUND_CASE_OPTIONS = [
+  { value: '',             label: 'All' },
+  { value: 'needs_lookup', label: 'Needs case lookup' },
+  { value: 'linked_only',  label: 'Linked cases only' },
 ];
 
 function setInboundFilter(key, value) {
   inboundFilter[key] = value;
-  if (key === 'classification') {
-    const dd = document.getElementById('inbound-filter-dd');
+  if (key === 'status') {
+    const dd = document.getElementById('inbound-status-dd');
     if (dd) dd.classList.toggle('has-value', !!value);
-    closeInboundFilterDd();
+    closeInboundStatusDd();
+  }
+  if (key === 'caseLink') {
+    const dd = document.getElementById('inbound-case-dd');
+    if (dd) dd.classList.toggle('has-value', !!value);
+    closeInboundCaseDd();
   }
   if (key === 'search') {
     const clearBtn = document.getElementById('inbound-search-clear');
@@ -1467,12 +1515,21 @@ function setInboundFilter(key, value) {
   renderInbound();
 }
 
-function toggleInboundFilterDd(ev) {
+function toggleInboundStatusDd(ev) {
   if (ev) ev.stopPropagation();
-  document.getElementById('inbound-filter-dd')?.classList.toggle('open');
+  closeInboundCaseDd();
+  document.getElementById('inbound-status-dd')?.classList.toggle('open');
 }
-function closeInboundFilterDd() {
-  document.getElementById('inbound-filter-dd')?.classList.remove('open');
+function closeInboundStatusDd() {
+  document.getElementById('inbound-status-dd')?.classList.remove('open');
+}
+function toggleInboundCaseDd(ev) {
+  if (ev) ev.stopPropagation();
+  closeInboundStatusDd();
+  document.getElementById('inbound-case-dd')?.classList.toggle('open');
+}
+function closeInboundCaseDd() {
+  document.getElementById('inbound-case-dd')?.classList.remove('open');
 }
 
 function clearInboundSearch() {
@@ -1483,13 +1540,15 @@ function clearInboundSearch() {
 
 function filteredInbound() {
   const q = (inboundFilter.search || '').trim().toLowerCase();
-  const cls = inboundFilter.classification;
+  const status = inboundFilter.status;
+  const caseLink = inboundFilter.caseLink;
   return (state.inbound || []).filter(r => {
     if (isSenderHidden(r.from_email)) return false;
-    if (cls === 'linked_only'  && !r.case_number) return false;
-    if (cls === 'needs_lookup' &&  r.case_number) return false;
-    if (cls && cls !== 'linked_only' && cls !== 'needs_lookup'
-        && (r.ai_classification || 'unclear') !== cls) return false;
+    // Case Number column
+    if (caseLink === 'linked_only'  && !r.case_number) return false;
+    if (caseLink === 'needs_lookup' &&  r.case_number) return false;
+    // Status column (AI classification) — combines with case column as AND
+    if (status && (r.ai_classification || 'unclear') !== status) return false;
     if (!q) return true;
     const hay = [
       r.case_number, r.from_email, r.practice_name, r.subject,
@@ -1499,42 +1558,61 @@ function filteredInbound() {
   });
 }
 
-function updateInboundChipCounts() {
-  // Hidden-sender filtering is part of the user's expected view, so apply it
-  // before counting (otherwise the visible list count and the chip count drift).
-  const rows = (state.inbound || []).filter(r => !isSenderHidden(r.from_email));
-  // Bucket by classification + linkage status
-  const counts = {
-    '':              rows.length,
-    linked_only:     rows.filter(r => !!r.case_number).length,
-    needs_lookup:    rows.filter(r => !r.case_number).length,
-  };
-  for (const r of rows) {
-    const k = r.ai_classification || 'unclear';
-    counts[k] = (counts[k] || 0) + 1;
-  }
+// Helpers describing each column's predicate, so counts can honor the AND.
+function inboundMatchesCase(r, caseLink) {
+  if (caseLink === 'linked_only')  return !!r.case_number;
+  if (caseLink === 'needs_lookup') return !r.case_number;
+  return true;
+}
+function inboundMatchesStatus(r, status) {
+  if (!status) return true;
+  return (r.ai_classification || 'unclear') === status;
+}
 
-  const current = inboundFilter.classification || '';
-  const labelEl    = document.getElementById('inbound-filter-label');
-  const btnCountEl = document.getElementById('inbound-filter-count');
-  const menuEl     = document.getElementById('inbound-filter-menu');
+// Render one custom dropdown (label + button count + option list with counts).
+function renderInboundDd(ids, options, currentValue, key, countFn) {
+  const labelEl    = document.getElementById(ids.label);
+  const btnCountEl = document.getElementById(ids.count);
+  const menuEl     = document.getElementById(ids.menu);
   if (!labelEl || !btnCountEl || !menuEl) return;
 
-  const currentOpt = INBOUND_FILTER_OPTIONS.find(o => o.value === current) || INBOUND_FILTER_OPTIONS[0];
+  const currentOpt = options.find(o => o.value === currentValue) || options[0];
   labelEl.textContent = currentOpt.label;
-  const btnCount = counts[currentOpt.value] ?? 0;
+  const btnCount = countFn(currentOpt.value);
   btnCountEl.textContent = btnCount;
   btnCountEl.classList.toggle('zero', btnCount === 0);
 
-  menuEl.innerHTML = INBOUND_FILTER_OPTIONS.map(o => {
-    const c = counts[o.value] ?? 0;
-    const sel = o.value === current ? ' selected' : '';
+  menuEl.innerHTML = options.map(o => {
+    const c = countFn(o.value);
+    const sel = o.value === currentValue ? ' selected' : '';
     const zero = c === 0 ? ' zero' : '';
-    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setInboundFilter('classification', '${o.value}')">
+    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setInboundFilter('${key}', '${o.value}')">
       <span>${esc(o.label)}</span>
       <span class="chip-count${zero}">${c}</span>
     </div>`;
   }).join('');
+}
+
+function updateInboundChipCounts() {
+  // Hidden-sender filtering is part of the user's expected view, so apply it
+  // before counting (otherwise the visible list count and the chip count drift).
+  const rows = (state.inbound || []).filter(r => !isSenderHidden(r.from_email));
+  const status   = inboundFilter.status || '';
+  const caseLink = inboundFilter.caseLink || '';
+
+  // Status counts honor the active Case filter (and vice versa) so the numbers
+  // reflect the AND the user actually gets.
+  const statusCount = (val) =>
+    rows.filter(r => inboundMatchesCase(r, caseLink) && inboundMatchesStatus(r, val)).length;
+  const caseCount = (val) =>
+    rows.filter(r => inboundMatchesStatus(r, status) && inboundMatchesCase(r, val)).length;
+
+  renderInboundDd(
+    { label: 'inbound-status-label', count: 'inbound-status-count', menu: 'inbound-status-menu' },
+    INBOUND_STATUS_OPTIONS, status, 'status', statusCount);
+  renderInboundDd(
+    { label: 'inbound-case-label', count: 'inbound-case-count', menu: 'inbound-case-menu' },
+    INBOUND_CASE_OPTIONS, caseLink, 'caseLink', caseCount);
 }
 
 function renderInbound() {
@@ -1554,7 +1632,7 @@ function renderInbound() {
 
   const filtered = filteredInbound();
   if (countEl) {
-    const filterActive = !!(inboundFilter.search || inboundFilter.classification);
+    const filterActive = !!(inboundFilter.search || inboundFilter.status || inboundFilter.caseLink);
     countEl.textContent = filterActive
       ? `Showing ${filtered.length} of ${totalRaw}`
       : `${totalRaw} total`;
@@ -1584,7 +1662,7 @@ function renderInbound() {
       <div class="item-head" onclick="toggleItem('${r.reply_id}')">
         <div>
           ${matchChip}
-          <span class="ai-chip ${r.ai_classification}">${esc(r.ai_classification || 'unclear')}</span>
+          <span class="ai-chip ${r.ai_classification}">${esc(aiClassLabel(r.ai_classification))}</span>
           ${lowConfChip}
           ${escalationChip}
           <div class="who">From <strong>${esc(r.from_email)}</strong> · ${esc(r.practice_name || '')}</div>
@@ -1678,7 +1756,7 @@ function hideEdit(id) { document.getElementById('edit-' + id).classList.remove('
 async function approve(id) {
   if (!confirm('Approve and queue this email for sending?')) return;
   try {
-    await callRpc('approve_attempt', { p_attempt_id: id, p_reviewer: REVIEWER, p_note: null });
+    await callRpc('approve_attempt', { p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name), p_note: null });
     toast('Approved ·will send on next tick', 'ok');
     await loadAll();
   } catch (e) {}
@@ -1730,7 +1808,7 @@ async function reject(id) {
   const note = prompt('Reject reason (optional):', '');
   if (note === null) return;
   try {
-    await callRpc('reject_attempt', { p_attempt_id: id, p_reviewer: REVIEWER, p_note: note || null });
+    await callRpc('reject_attempt', { p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name), p_note: note || null });
     toast('Rejected ·case will be retried tomorrow', 'ok');
     await loadAll();
   } catch (e) {}
@@ -1742,7 +1820,7 @@ async function saveEdit(id) {
   const note    = document.getElementById('note-' + id).value;
   try {
     await callRpc('edit_and_approve_attempt', {
-      p_attempt_id: id, p_reviewer: REVIEWER,
+      p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name),
       p_subject: subject, p_body_html: body,
       p_note: note || null
     });
@@ -1829,20 +1907,36 @@ async function callAnthropic(prompt, maxTokens) {
     toast('Please sign in again to use AI features.', 'err');
     throw new Error('Not authenticated');
   }
-  const res = await fetch('/api/anthropic', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + token,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({ prompt, maxTokens: maxTokens || 1000 })
-  });
+  // Abort if the proxy/upstream hangs, so the UI never spins forever.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  let res;
+  try {
+    res = await fetch('/api/anthropic', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ prompt, maxTokens: maxTokens || 1000 }),
+      signal: ctrl.signal
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('AI request timed out after 60s. Please try again.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+  // Read the body exactly once — a Response stream can't be re-read. Parsing
+  // JSON out of the text avoids the "body stream already read" error that
+  // masked the real failure on the error path.
+  const raw = await res.text();
+  let j = {};
+  try { j = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON body */ }
   if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error || ''; } catch { detail = await res.text(); }
+    const detail = j.error || raw || res.statusText || '';
     throw new Error('Service ' + res.status + ': ' + String(detail).slice(0, 200));
   }
-  const j = await res.json();
   return j.text || j.content?.[0]?.text || '';
 }
 
@@ -2037,8 +2131,10 @@ document.addEventListener('click', (e) => {
   if (filterDd && !filterDd.contains(e.target)) filterDd.classList.remove('open');
   const partnerDd = document.getElementById('outbound-partner-dd');
   if (partnerDd && !partnerDd.contains(e.target)) partnerDd.classList.remove('open');
-  const inboundDd = document.getElementById('inbound-filter-dd');
-  if (inboundDd && !inboundDd.contains(e.target)) inboundDd.classList.remove('open');
+  const inboundStatusDd = document.getElementById('inbound-status-dd');
+  if (inboundStatusDd && !inboundStatusDd.contains(e.target)) inboundStatusDd.classList.remove('open');
+  const inboundCaseDd = document.getElementById('inbound-case-dd');
+  if (inboundCaseDd && !inboundCaseDd.contains(e.target)) inboundCaseDd.classList.remove('open');
   const reschedDd = document.getElementById('resched-filter-dd');
   if (reschedDd && !reschedDd.contains(e.target)) reschedDd.classList.remove('open');
 });
@@ -2137,13 +2233,12 @@ async function submitRequest() {
   const reason  = document.querySelector('input[name="req-reason"]:checked').value;
   const summary = document.getElementById('req-summary').value.trim();
   const details = document.getElementById('req-details').value.trim();
-  const who     = document.getElementById('req-who').value.trim();
   const priority = document.querySelector('input[name="req-priority"]:checked').value;
   const resultEl = document.getElementById('req-result');
   const btn = document.getElementById('req-submit');
 
-  if (!caseNum || !summary || !who) {
-    resultEl.innerHTML = '<div class="empty" style="padding:14px;color:var(--red);"><strong>Case number, issue summary, and your name are required.</strong></div>';
+  if (!caseNum || !summary) {
+    resultEl.innerHTML = '<div class="empty" style="padding:14px;color:var(--red);"><strong>Case number and issue summary are required.</strong></div>';
     return;
   }
   if (reason !== 'design_approval' && !details) {
@@ -2155,13 +2250,16 @@ async function submitRequest() {
   resultEl.innerHTML = '<div class="loading">Submitting request and composing draft…</div>';
 
   try {
+    const me = loginIdentity();
     await callRpc('submit_outreach_request', {
       p_case_number: caseNum,
       p_reason: reason,
-      p_requested_by: who,
+      p_requested_by: me.name,
       p_issue_summary: summary,
       p_details: details || null,
-      p_priority: priority
+      p_priority: priority,
+      p_login_name: me.name,
+      p_login_email: me.email
     });
     resultEl.innerHTML =
       '<div style="background:var(--green-soft);border:1px solid var(--green);color:var(--green);' +
@@ -2169,7 +2267,7 @@ async function submitRequest() {
       '<strong>Request submitted.</strong> The bot has drafted the email. ' +
       'Check the <strong>Pending Outbound</strong> tab ·a coordinator will review and approve before sending.' +
       '</div>';
-    // Reset form fields (keep "Your Name" for the next request)
+    // Reset form fields
     document.getElementById('req-case').value = '';
     document.getElementById('req-summary').value = '';
     document.getElementById('req-details').value = '';
@@ -3105,21 +3203,25 @@ async function submitLog() {
   const workflow = document.getElementById('log-workflow').value;
   const stage    = document.getElementById('log-stage').value;
   if (!caseId || !action) { toast('Case ID and action are required', 'err'); return; }
+  const me = loginIdentity();
   const row = {
     id: genId(),
     case_id: caseId, action_type: action,
     coordinator: coord || null, log_date: dt || pacificDate(),
     notes: notes || null,
+    created_by: me.name, created_by_id: me.email,
   };
   try {
     if (inCowork) {
-      await runMcpSql("INSERT INTO \"CaseLog\" (id, case_id, action_type, coordinator, log_date, notes, created_date) VALUES (" +
+      const q = v => v ? "'" + String(v).replace(/'/g, "''") + "'" : 'NULL';
+      await runMcpSql("INSERT INTO \"CaseLog\" (id, case_id, action_type, coordinator, log_date, notes, created_by, created_by_id, created_date) VALUES (" +
         "'" + row.id + "', " +
         "'" + caseId.replace(/'/g,"''") + "', " +
         "'" + action.replace(/'/g,"''") + "', " +
         (coord ? "'" + coord.replace(/'/g,"''") + "'" : 'NULL') + ", " +
         (dt    ? "'" + dt + "'" : 'NULL') + ", " +
-        (notes ? "'" + notes.replace(/'/g,"''") + "'" : 'NULL') + ", now())");
+        (notes ? "'" + notes.replace(/'/g,"''") + "'" : 'NULL') + ", " +
+        q(me.name) + ", " + q(me.email) + ", now())");
     } else {
       const cfg = getConfig();
       const res = await fetch(cfg.url + '/rest/v1/CaseLog', {
@@ -4066,7 +4168,7 @@ function openCallNotes(prefillCaseNumber) {
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
   });
   document.getElementById('cn-with').value    = '';
-  document.getElementById('cn-who').value     = localStorage.getItem('skdla_reviewer') || '';
+  document.getElementById('cn-who').value     = loginIdentity().name || localStorage.getItem('skdla_reviewer') || '';
   document.getElementById('cn-notes').value   = '';
   document.getElementById('cn-summary').value = '';
   modal.classList.add('open');
@@ -4156,7 +4258,8 @@ Object.assign(window, {
   toggleFilterDd, setOutboundRevenue, closeFilterDd,
   togglePartnerDd, setOutboundPartner, closePartnerDd,
   // Inbound filters
-  toggleInboundFilterDd, setInboundFilter, closeInboundFilterDd, clearInboundSearch,
+  toggleInboundStatusDd, closeInboundStatusDd, toggleInboundCaseDd, closeInboundCaseDd,
+  setInboundFilter, clearInboundSearch,
   // Hidden senders
   toggleHiddenSenders, addHiddenSender, removeHiddenSender, closeHiddenSenders,
   // Outbound actions

@@ -215,7 +215,7 @@
     display: flex; align-items: center;
     padding: 14px 16px;
     min-height: 52px;
-    font-size: 11px; font-weight: 700;
+    font-size: 20px; font-weight: 700;
     color: var(--slate);
     letter-spacing: 1.6px; text-transform: uppercase;
     cursor: pointer;
@@ -2052,7 +2052,7 @@
   }
   .panel.hidden { display: none; }
   /* Touch-friendly tab and button sizes */
-  .tab { padding: 14px 18px; font-size: 12px; min-height: 56px; }
+  .tab { padding: 14px 18px; font-size: 20px; min-height: 56px; }
   button.act {
     padding: 11px 20px; font-size: 13px;
     min-height: 42px;
@@ -2507,7 +2507,7 @@
   /* Tabs: lighter weight, gentler tracking, Title-case feel */
   .tabs { font-weight: 500; }
   .tab {
-    font-size: 12px; font-weight: 600;
+    font-size: 14px; font-weight: 600;
     letter-spacing: 0.4px; text-transform: none;
     padding: 16px 18px; min-height: 56px;
   }
@@ -2636,8 +2636,8 @@
     /* Equal top/bottom padding so .brand and .appbar-actions sit truly
        vertical-centered with the bar. The absolutely-positioned status
        row tucks into the bottom padding without shifting the centerline. */
-    padding-top: 26px;
-    padding-bottom: 26px;
+    padding-top: 13px;
+    padding-bottom: 13px;
     position: relative;
   }
   /* Tabs strip scrolls with the page (both Design Approvals and
@@ -3171,13 +3171,21 @@
   <h2>Pending Replies <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  doctor responses awaiting confirmation</span></h2>
   <div class="inbound-toolbar">
     <div class="filter-chips">
-      <label class="toolbar-label">Filter</label>
-      <div class="custom-dd" id="inbound-filter-dd">
-        <button type="button" class="custom-dd-btn" onclick="toggleInboundFilterDd(event)" aria-haspopup="listbox">
-          <span class="custom-dd-label" id="inbound-filter-label">All</span>
-          <span class="chip-count" id="inbound-filter-count">–</span>
+      <label class="toolbar-label">Status</label>
+      <div class="custom-dd" id="inbound-status-dd">
+        <button type="button" class="custom-dd-btn" onclick="toggleInboundStatusDd(event)" aria-haspopup="listbox">
+          <span class="custom-dd-label" id="inbound-status-label">All</span>
+          <span class="chip-count" id="inbound-status-count">–</span>
         </button>
-        <div class="custom-dd-menu" id="inbound-filter-menu" role="listbox"></div>
+        <div class="custom-dd-menu" id="inbound-status-menu" role="listbox"></div>
+      </div>
+      <label class="toolbar-label" style="margin-left: 14px;">Case</label>
+      <div class="custom-dd" id="inbound-case-dd">
+        <button type="button" class="custom-dd-btn" onclick="toggleInboundCaseDd(event)" aria-haspopup="listbox">
+          <span class="custom-dd-label" id="inbound-case-label">All</span>
+          <span class="chip-count" id="inbound-case-count">–</span>
+        </button>
+        <div class="custom-dd-menu" id="inbound-case-menu" role="listbox"></div>
       </div>
       <div class="hidden-senders-wrap" id="hidden-senders-wrap">
       <button class="hidden-senders-btn" onclick="toggleHiddenSenders(event)" aria-label="Manage hidden senders">
@@ -3328,11 +3336,6 @@
 Please isolate the prep site and rescan
 We need clean margins to proceed"></textarea>
       <div class="help">Each non-empty line becomes a bullet in the doctor's email. Leave blank for Design Approval requests.</div>
-    </div>
-
-    <div class="form-row">
-      <label>Your Name *</label>
-      <input id="req-who" type="text" placeholder="e.g. Joe Shmoe" />
     </div>
 
     <div class="form-row">
