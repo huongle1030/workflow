@@ -1256,7 +1256,7 @@ function renderOutboundCard(r) {
           <button class="act approve" onclick="approve('${r.attempt_id}')" ${hasExocadLink ? '' : 'disabled title="Add the exocad viewer link first"'}>Approve &amp; Send</button>
           <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${hasExocadLink ? '' : 'disabled title="Add the exocad viewer link first"'}>Edit Then Send</button>
           <button class="act reject" onclick="reject('${r.attempt_id}')">Reject</button>
-          <button class="act ghost" onclick="resummarize('${r.attempt_id}', '${esc(r.case_number)}')">Auto Resummarize</button>
+          <button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>
         </div>
         <div class="edit-form" id="edit-${r.attempt_id}">
           <label>Subject</label>
@@ -1465,7 +1465,7 @@ function prettifyReplyText(text) {
 // Filter state for Pending Replies (persists for the session).
 // `status` filters on AI classification; `caseLink` filters on case linkage.
 // The two columns combine as an AND.
-const inboundFilter = { search: '', status: '', caseLink: '' };
+const inboundFilter = { search: '', status: '', caseLink: '', timeSensitive: false };
 
 // ---------- Hidden senders blocklist (persisted in localStorage) ----------
 const HIDDEN_SENDERS_KEY = 'skdla_hidden_senders';
@@ -1619,12 +1619,24 @@ function clearInboundSearch() {
   setInboundFilter('search', '');
 }
 
+// Time-sensitive toggle — when on, show only replies the AI flagged as needing
+// escalation for a phone call (needs_escalation). Combines with the other
+// filters as an AND.
+function toggleInboundTimeSensitive(on) {
+  inboundFilter.timeSensitive = !!on;
+  const wrap = document.getElementById('inbound-ts-toggle')?.closest('.ts-toggle');
+  if (wrap) wrap.classList.toggle('active', inboundFilter.timeSensitive);
+  renderInbound();
+}
+
 function filteredInbound() {
   const q = (inboundFilter.search || '').trim().toLowerCase();
   const status = inboundFilter.status;
   const caseLink = inboundFilter.caseLink;
   return (state.inbound || []).filter(r => {
     if (isSenderHidden(r.from_email)) return false;
+    // Time-sensitive toggle — only replies flagged for a phone call
+    if (inboundFilter.timeSensitive && !r.needs_escalation) return false;
     // Case Number column
     if (caseLink === 'linked_only'  && !r.case_number) return false;
     if (caseLink === 'needs_lookup' &&  r.case_number) return false;
@@ -1713,7 +1725,7 @@ function renderInbound() {
 
   const filtered = filteredInbound();
   if (countEl) {
-    const filterActive = !!(inboundFilter.search || inboundFilter.status || inboundFilter.caseLink);
+    const filterActive = !!(inboundFilter.search || inboundFilter.status || inboundFilter.caseLink || inboundFilter.timeSensitive);
     countEl.textContent = filterActive
       ? `Showing ${filtered.length} of ${totalRaw}`
       : `${totalRaw} total`;
@@ -1736,7 +1748,7 @@ function renderInbound() {
       ? `<span class="match-chip low" title="Auto-matched via ${esc(r.match_method)}">⚠ Low-confidence match</span>`
       : '';
     const escalationChip = r.needs_escalation
-      ? `<span class="match-chip escalate" title="Looks time-sensitive — consider escalating to the account manager for a phone call">⚡ Time-sensitive — phone call</span>`
+      ? `<span class="match-chip escalate" title="Looks time-sensitive — consider escalating to the account manager for a phone call">Time-sensitive; Call</span>`
       : '';
     return `
     <div class="item reason-${r.reason || 'design_approval'} ${isUnmatched ? 'unmatched' : ''}" data-id="${r.reply_id}">
@@ -1790,6 +1802,7 @@ function renderInbound() {
           <button class="act" style="background: var(--gold);" onclick="classifyReply('${r.reply_id}', 'pricing_or_product_question')" ${isUnmatched ? 'disabled title="Link this reply to a case first"' : ''}>Pricing / Product Q</button>
           <button class="act" style="background: var(--red);" onclick="escalateForCall('${r.reply_id}')" ${isUnmatched ? 'disabled title="Link this reply to a case first"' : ''} title="Escalate to the account manager for a phone call (time-sensitive scheduling/delivery)">Escalate (Call)</button>
           <button class="act slate" onclick="classifyReply('${r.reply_id}', 'other')">Other</button>
+          ${isUnmatched ? '' : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
         </div>
       </div>
     </div>`;
@@ -2662,6 +2675,18 @@ function _normalizeCommRow(cc) {
     channel_source: cc.channel_source || null,
     cc_compliant: (cc.cc_compliant === undefined ? null : cc.cc_compliant),
   };
+}
+
+// Card shortcut: jump to the Case Lookup tab with a case prefilled and its
+// timeline loaded. Wired to the "Lookup Case" button on Outbound / Approval /
+// Replies cards.
+function gotoCaseLookup(caseNumber) {
+  const cn = String(caseNumber || '').trim();
+  if (!cn) { toast('No case number on this card', 'err'); return; }
+  activateOutreachTab('lookup');
+  const input = document.getElementById('lookup-input');
+  if (input) input.value = cn;
+  lookupCase();
 }
 
 async function lookupCase() {
@@ -4573,7 +4598,7 @@ Object.assign(window, {
   togglePartnerDd, setOutboundPartner, closePartnerDd,
   // Inbound filters
   toggleInboundStatusDd, closeInboundStatusDd, toggleInboundCaseDd, closeInboundCaseDd,
-  setInboundFilter, clearInboundSearch,
+  setInboundFilter, clearInboundSearch, toggleInboundTimeSensitive,
   // Hidden senders
   toggleHiddenSenders, addHiddenSender, removeHiddenSender, closeHiddenSenders,
   // Outbound actions
@@ -4585,7 +4610,7 @@ Object.assign(window, {
   // Audit / misc
   exportReschedule, setAuditWindow,
   // Outreach panels
-  lookupCase, generateCaseSummary, printCaseLookup,
+  lookupCase, gotoCaseLookup, generateCaseSummary, printCaseLookup,
   onCaseLookupInput, pickCaseSuggestion,
   submitFeedback, submitRequest,
   // Case Coordination
