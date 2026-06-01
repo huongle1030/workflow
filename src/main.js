@@ -690,7 +690,7 @@ function updatePendingBadge() {
   if (!el) return;
   el.textContent = (state.outbound?.length || 0)
                  + (state.approval?.length || 0)
-                 + (state.inbound?.length || 0);
+                 + visibleInbound().length;   // exclude hidden senders
 }
 
 // Roll-up count on the "Actions" parent tab = ready (ABS scan) + reschedule.
@@ -710,9 +710,7 @@ async function loadInbound() {
     rows = await restGet('/rest/v1/v_pending_inbound?select=*&order=received_at.desc&limit=2000') || [];
   }
   state.inbound = rows;
-  document.getElementById('badge-in').textContent = rows.length;
-  document.getElementById('stat-in').textContent = rows.length;
-  updatePendingBadge();
+  updateInboundBadges();
   renderInbound();
 }
 
@@ -1495,6 +1493,24 @@ function isSenderHidden(email) {
   return false;
 }
 
+// Inbound replies the current user actually sees, i.e. excluding hidden senders.
+// All "pending replies" counts/badges use this so the number matches the list.
+function visibleInbound() {
+  return (state.inbound || []).filter(r => !isSenderHidden(r.from_email));
+}
+
+// Refresh every "pending replies" count from the visible (non-hidden) set: the
+// Pending Replies tab badge, its stat, and the parent "Pending" roll-up. Called
+// on load and whenever the hidden-sender list changes.
+function updateInboundBadges() {
+  const n = visibleInbound().length;
+  const badgeIn = document.getElementById('badge-in');
+  const statIn  = document.getElementById('stat-in');
+  if (badgeIn) badgeIn.textContent = n;
+  if (statIn)  statIn.textContent = n;
+  updatePendingBadge();
+}
+
 function toggleHiddenSenders(ev) {
   if (ev) ev.stopPropagation();
   const wrap = document.getElementById('hidden-senders-wrap');
@@ -1507,6 +1523,8 @@ function closeHiddenSenders() {
 }
 
 function addHiddenSender(maybeEmail) {
+  // Only admin/executive/manager can hide senders; viewing the list is open to all.
+  if (!can(CAPABILITIES.HIDE_SENDER)) return;
   const input = document.getElementById('hsp-input');
   let val = (maybeEmail || (input ? input.value : '')).toLowerCase().trim();
   if (!val) return;
@@ -1519,13 +1537,16 @@ function addHiddenSender(maybeEmail) {
   if (input) input.value = '';
   renderHiddenSendersList();
   renderInbound();
+  updateInboundBadges();
 }
 
 function removeHiddenSender(rule) {
+  if (!can(CAPABILITIES.HIDE_SENDER)) return;
   hiddenSenders = hiddenSenders.filter(r => r !== rule);
   saveHiddenSenders(hiddenSenders);
   renderHiddenSendersList();
   renderInbound();
+  updateInboundBadges();
 }
 
 function renderHiddenSendersList() {
@@ -1534,6 +1555,17 @@ function renderHiddenSendersList() {
   const wrap = document.getElementById('hidden-senders-wrap');
   if (count) count.textContent = hiddenSenders.length;
   if (wrap) wrap.classList.toggle('has-blocked', hiddenSenders.length > 0);
+
+  // Adding/removing senders is admin/executive/manager-only; everyone else gets a
+  // read-only view of the list (no input row, no per-item remove button).
+  const canHide = can(CAPABILITIES.HIDE_SENDER);
+  if (wrap) {
+    const inputRow = wrap.querySelector('.hsp-input-row');
+    const sub = wrap.querySelector('.hsp-sub');
+    if (inputRow) inputRow.style.display = canHide ? '' : 'none';
+    if (sub) sub.style.display = canHide ? '' : 'none';
+  }
+
   if (!list) return;
   if (!hiddenSenders.length) {
     list.innerHTML = '<div class="hsp-empty">No senders hidden yet.</div>';
@@ -1542,7 +1574,7 @@ function renderHiddenSendersList() {
   list.innerHTML = hiddenSenders.map(rule => `
     <div class="hsp-item">
       <span class="email">${esc(rule)}</span>
-      <button class="remove" onclick="removeHiddenSender('${esc(rule)}')" aria-label="Remove">×</button>
+      ${canHide ? `<button class="remove" onclick="removeHiddenSender('${esc(rule)}')" aria-label="Remove">×</button>` : ''}
     </div>
   `).join('');
 }
@@ -1711,7 +1743,7 @@ function updateInboundChipCounts() {
 function renderInbound() {
   const root = document.getElementById('list-inbound');
   const countEl = document.getElementById('inbound-count');
-  const totalRaw = (state.inbound || []).length;
+  const totalRaw = visibleInbound().length;   // exclude hidden senders from the count
   updateInboundChipCounts();
 
   if (!totalRaw) {
@@ -1750,11 +1782,29 @@ function renderInbound() {
     const escalationChip = r.needs_escalation
       ? `<span class="match-chip escalate" title="Looks time-sensitive — consider escalating to the account manager for a phone call">Time-sensitive; Call</span>`
       : '';
+    // Admin-only AI case suggestion. Advisory: it never writes the real
+    // case_number — the ⚠ tag stays until "Use this case #" links it via the
+    // existing manuallyLinkReply path. Gated by VIEW_CASE_SUGGESTION (admin only).
+    const showSuggestion = isUnmatched && can(CAPABILITIES.VIEW_CASE_SUGGESTION) && r.suggested_case_number;
+    const suggConfPct = Math.round(Number(r.suggested_confidence || 0) * 100);
+    // Informational chip stays in the card head next to the ⚠ tag.
+    const suggestionChip = showSuggestion ? `
+      <span class="match-chip suggestion" title="${esc(r.suggested_reasoning || 'AI-suggested case — review before linking')}">Possible: ${esc(r.suggested_case_number)} · ${suggConfPct}% ⓘ</span>
+    ` : '';
+    // Action buttons live at the bottom-right of the card: look up the suggested
+    // case, or link it via the existing manuallyLinkReply flow. Admin-only.
+    const suggestionActions = showSuggestion ? `
+      <div class="suggestion-actions" style="margin-left:auto;display:flex;gap:8px;">
+        <button class="act ghost" style="color:var(--charcoal);" onclick="event.stopPropagation(); gotoCaseLookup('${esc(r.suggested_case_number)}')" title="Open the suggested case ${esc(r.suggested_case_number)} in Case Lookup">Lookup Case</button>
+        <button class="act blue suggestion-use" onclick="event.stopPropagation(); manuallyLinkReply('${r.reply_id}', '${esc(r.suggested_case_number)}')" title="Link this reply to the suggested case via the manual-link flow">Use this case #</button>
+      </div>
+    ` : '';
     return `
     <div class="item reason-${r.reason || 'design_approval'} ${isUnmatched ? 'unmatched' : ''}" data-id="${r.reply_id}">
       <div class="item-head" onclick="toggleItem('${r.reply_id}')">
         <div>
           ${matchChip}
+          ${suggestionChip}
           <span class="ai-chip ${r.ai_classification}">${esc(aiClassLabel(r.ai_classification))}</span>
           ${lowConfChip}
           ${escalationChip}
@@ -1768,7 +1818,7 @@ function renderInbound() {
         <div class="meta">
           <div>Received ${fmtDate(r.received_at)}</div>
           ${r.patient_name ? '<div>' + esc(r.patient_name) + '</div>' : ''}
-          <button class="hide-sender-btn" onclick="event.stopPropagation(); addHiddenSender('${esc(r.from_email)}');" title="Hide ${esc(r.from_email)} from Pending Replies">Hide sender</button>
+          ${can(CAPABILITIES.HIDE_SENDER) ? `<button class="hide-sender-btn" onclick="event.stopPropagation(); addHiddenSender('${esc(r.from_email)}');" title="Hide ${esc(r.from_email)} from Pending Replies">Hide sender</button>` : ''}
         </div>
       </div>
       <div class="item-body">
@@ -1789,7 +1839,7 @@ function renderInbound() {
             <div class="link-gate-title">⚠ No case linked to this reply yet</div>
             <div class="link-gate-sub">Our matcher couldn't link this email to a case automatically. If you know which case it's about, paste the case number below. If this isn't about any case in our system (general inquiry, wrong inbox, vendor noise), click <strong>No matching case</strong> to triage it out.</div>
             <div class="link-gate-row">
-              <input type="text" id="link-input-${r.reply_id}" placeholder="2026-XXXXX" autocomplete="off" />
+              <input type="text" id="link-input-${r.reply_id}" placeholder="2026-XXXXX" autocomplete="off"${showSuggestion ? ` value="${esc(r.suggested_case_number)}"` : ''} />
               <button class="act approve" onclick="manuallyLinkReply('${r.reply_id}', document.getElementById('link-input-${r.reply_id}').value)">Link to case</button>
               <button class="act slate" onclick="markReplyNoCase('${r.reply_id}')" title="Remove this reply from the queue — no matching case exists in our system">No matching case</button>
             </div>
@@ -1802,7 +1852,7 @@ function renderInbound() {
           <button class="act" style="background: var(--gold);" onclick="classifyReply('${r.reply_id}', 'pricing_or_product_question')" ${isUnmatched ? 'disabled title="Link this reply to a case first"' : ''}>Pricing / Product Q</button>
           <button class="act" style="background: var(--red);" onclick="escalateForCall('${r.reply_id}')" ${isUnmatched ? 'disabled title="Link this reply to a case first"' : ''} title="Escalate to the account manager for a phone call (time-sensitive scheduling/delivery)">Escalate (Call)</button>
           <button class="act slate" onclick="classifyReply('${r.reply_id}', 'other')">Other</button>
-          ${isUnmatched ? '' : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
+          ${isUnmatched ? suggestionActions : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
         </div>
       </div>
     </div>`;
