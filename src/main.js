@@ -288,6 +288,10 @@ function restoreUiContext(ctx) {
 }
 
 async function loadAll() {
+  // Don't refresh mid-tour: re-rendering the lists replaces the DOM nodes the
+  // spotlight is pinned to (and collapses any expanded row), which knocks the
+  // tour box off its target. The walkthrough runs on already-loaded data.
+  if (tourActive) return;
   const ctx = captureUiContext();
   document.getElementById('lastUpdated').textContent = 'Refreshing…';
   await Promise.all([loadOutbound(), loadInbound(), loadAudit(), loadReschedule(), loadReady(), loadEditLog(), loadFeedback()]);
@@ -4066,6 +4070,12 @@ const TOUR_STEPS = [
       const first = document.querySelector('#panel-outbound .item');
       if (first && !first.classList.contains('expanded')) first.classList.add('expanded');
     } },
+  { title: "Most Recent Communication", body: "The lighter-yellow card shows the latest activity on this case — email, phone call, or note — with who logged it and when. A quick read on where the doctor left off before this email goes out. (Hidden when the case has no prior activity.)",
+    selector: '#panel-outbound .item.expanded .note-banner', placement: 'top',
+    beforeShow: () => {
+      const first = document.querySelector('#panel-outbound .item');
+      if (first && !first.classList.contains('expanded')) first.classList.add('expanded');
+    } },
   { title: "Doctor preferences", body: "The yellow panel on the right shows that doctor's preferences. Bold line at top is the one thing that matters for this email's reason. Full preferences sit below the divider. Scroll if it overflows.",
     selector: '#panel-outbound .item.expanded .prefs-banner', placement: 'left',
     beforeShow: () => {
@@ -4080,12 +4090,6 @@ const TOUR_STEPS = [
     } },
   { title: "Edit Then Send", body: "Opens a visual editor. Type changes right in the rendered email, then save.",
     selector: '#panel-outbound .item.expanded .act.edit', placement: 'top',
-    beforeShow: () => {
-      const first = document.querySelector('#panel-outbound .item');
-      if (first && !first.classList.contains('expanded')) first.classList.add('expanded');
-    } },
-  { title: "Auto Resummarize", body: "Regenerates the RX bullets automatically. Use when the first pass misses something.",
-    selector: '#panel-outbound .item.expanded .act.blue', placement: 'top',
     beforeShow: () => {
       const first = document.querySelector('#panel-outbound .item');
       if (first && !first.classList.contains('expanded')) first.classList.add('expanded');
@@ -4115,7 +4119,7 @@ const TOUR_STEPS = [
     selector: '#panel-reschedule', placement: 'top',
     beforeShow: () => activateOutreachTab('reschedule') },
   { title: "Export to CSV", body: "One click hands the list straight to production.",
-    selector: '#panel-reschedule', placement: 'top' },
+    selector: '#panel-reschedule .export-btn', placement: 'bottom' },
 
   { title: "Click Submit Request", body: "Open the next tab.",
     selector: '#tabs-outreach .tab[data-tab="submit"]', placement: 'bottom', requireClick: true },
@@ -4149,8 +4153,8 @@ const TOUR_STEPS = [
 
   { title: "Click History", body: "Open the next tab.",
     selector: '#tabs-cc .tab[data-cc-tab="history"]', placement: 'bottom', requireClick: true },
-  { title: "Searchable archive", body: "Filter by case, coordinator, or action. Export First Pass Yield for QA metrics.",
-    selector: '#panel-cc-history', placement: 'top' },
+  { title: "Searchable archive", body: "Filter by case, coordinator, or action — this dropdown narrows to a single action type. Export First Pass Yield for QA metrics.",
+    selector: '#hist-action', placement: 'bottom' },
 
   { title: "Click Case Tracker", body: "Open the next tab.",
     selector: '#tabs-cc .tab[data-cc-tab="tracker"]', placement: 'bottom', requireClick: true },
@@ -4276,8 +4280,12 @@ function showTourStep() {
       el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
     }
   }
-  // Give beforeShow's tab switch + scroll a tick to settle
+  // Give beforeShow's tab switch + scroll a tick to settle, then re-pin a few
+  // more times so a late panel render or the spotlight's own CSS transition
+  // can't leave the box stranded on a stale/old position.
   setTimeout(positionTour, 320);
+  setTimeout(positionTour, 650);
+  setTimeout(positionTour, 1000);
 }
 
 function positionTour() {
