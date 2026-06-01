@@ -453,11 +453,14 @@
     font-size: 13px; max-height: 380px; overflow-y: auto;
   }
 
-  /* Side-by-side layout for expanded outbound rows */
+  /* Side-by-side layout for expanded outbound rows.
+     Email preview takes the flexible 1fr; the side region (Most Recent Note +
+     Account Preferences, laid out left-to-right) sizes to its content, which
+     pulls the email card down to ~3/4 of its old width when both are present. */
   .outbound-detail-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 300px;
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 18px;
     margin-bottom: 14px;
   }
   .outbound-detail-row.no-prefs {
@@ -497,6 +500,44 @@
   .prefs-banner .text {
     white-space: pre-wrap; line-height: 1.5;
   }
+  /* Side region of the outbound detail row — Most Recent Note (left) sits
+     side-by-side with Account Preferences (right). Fixed widths so prefs reads
+     slightly wider than the note card; stacks vertically below 1400px. */
+  .outbound-side {
+    display: flex; flex-direction: row; gap: 14px;
+    align-items: stretch; min-width: 0;
+  }
+  .outbound-side .note-banner { width: 320px; flex: none; }
+  .outbound-side .prefs-banner { width: 420px; flex: none; }
+  @media (max-width: 1400px) {
+    .outbound-side { flex-direction: column; }
+    .outbound-side .note-banner,
+    .outbound-side .prefs-banner { width: min(420px, 100%); }
+  }
+  /* Most Recent Note sub-card — mirrors .prefs-banner but uses a half-strength
+     tint of the same yellow (#FEF9C3 / #FDE68A blended halfway to white). */
+  .note-banner {
+    background: #FEFCE1; border: 1px solid #FEF3C5;
+    color: #713F12; padding: 12px 14px; border-radius: 6px;
+    font-size: 13px;
+    max-height: 380px; overflow-y: auto;
+  }
+  .note-banner .label {
+    font-size: 10px; font-weight: 800;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    color: #92400E; margin-bottom: 6px;
+  }
+  .note-banner .note-meta {
+    font-size: 11px; font-weight: 600;
+    color: #92400E; opacity: 0.85; margin-bottom: 6px;
+  }
+  .note-banner .note-subject {
+    font-size: 14px; font-weight: 700; line-height: 1.35;
+    color: #713F12; margin-bottom: 4px;
+  }
+  .note-banner .text {
+    white-space: pre-wrap; line-height: 1.5;
+  }
   @media (max-width: 900px) {
     .outbound-detail-row { grid-template-columns: 1fr; }
   }
@@ -507,6 +548,20 @@
   }
   .preview p { margin: 0 0 8px; }
   .preview a { color: var(--blue); }
+  /* Normalize email-body bullet lists. Email templates often nest <ul>s, which
+     the browser renders with hollow circles (level 2) / squares (level 3),
+     giving the inconsistent look seen on some cards. Force a filled disc at
+     every nesting level so all bullets match, in both the preview and editor. */
+  .preview ul, .email-body-editor ul,
+  .preview ol, .email-body-editor ol {
+    padding-left: 24px; margin: 0 0 8px;
+  }
+  .preview ul ul, .preview ul ol, .preview ol ul, .preview ol ol,
+  .email-body-editor ul ul, .email-body-editor ul ol,
+  .email-body-editor ol ul, .email-body-editor ol ol {
+    margin: 2px 0 2px;
+  }
+  .preview ul li, .email-body-editor ul li { list-style-type: disc !important; }
   /* Exocad link banner — pinned at the top of the email preview so the
      coordinator always sees the design link, even if the email template
      buried it. */
@@ -2128,12 +2183,14 @@
     min-height: 42px;
   }
   .submit-btn { padding: 14px 32px; font-size: 14px; min-height: 48px; }
-  /* Use the wider preview/prefs split kiosk-style */
+  /* Use the wider preview/side split kiosk-style. Email = 1fr, the note +
+     prefs side region sizes to its content (~3/4 email width when both show). */
   .outbound-detail-row {
-    grid-template-columns: minmax(0, 1fr) 380px;
+    grid-template-columns: minmax(0, 1fr) max-content;
     gap: 18px;
   }
   .outbound-detail-row .preview,
+  .note-banner,
   .prefs-banner {
     /* Cap height so a very long email body doesn't push action buttons off
        screen, but small enough to still see the buttons on a 1080p kiosk */
@@ -2148,25 +2205,30 @@
   /* Custom scrollbars so they're visible on a Windows kiosk touchscreen */
   body::-webkit-scrollbar,
   .preview::-webkit-scrollbar,
+  .note-banner::-webkit-scrollbar,
   .prefs-banner::-webkit-scrollbar { width: 12px; height: 12px; }
   body::-webkit-scrollbar-thumb,
   .preview::-webkit-scrollbar-thumb,
+  .note-banner::-webkit-scrollbar-thumb,
   .prefs-banner::-webkit-scrollbar-thumb {
     background: var(--slate-light); border-radius: 6px;
   }
   body::-webkit-scrollbar-thumb:hover,
   .preview::-webkit-scrollbar-thumb:hover,
+  .note-banner::-webkit-scrollbar-thumb:hover,
   .prefs-banner::-webkit-scrollbar-thumb:hover {
     background: var(--slate);
   }
   body::-webkit-scrollbar-track,
   .preview::-webkit-scrollbar-track,
+  .note-banner::-webkit-scrollbar-track,
   .prefs-banner::-webkit-scrollbar-track { background: transparent; }
 
   /* Below 1280px wide (small laptop), allow more horizontal space */
   @media (max-width: 1280px) {
     body { max-width: none; }
     .outbound-detail-row .preview,
+    .note-banner,
     .prefs-banner { max-height: 420px; }
   }
   /* Below 900px keeps the existing single-column outbound stack */

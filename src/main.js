@@ -758,6 +758,20 @@ function esc(s) {
   }[c]));
 }
 
+// For email communications the stored body is the full thread — the most recent
+// message sits on top, with older quoted replies below it. Trim to just that
+// top message so the card shows one email, not the entire chain. Cuts at the
+// first quoted-reply header (Outlook "From:…Sent:…" / Gmail "On … wrote:").
+function topEmailMessage(body) {
+  if (!body) return '';
+  const cuts = [];
+  let m = body.match(/\bFrom:\s[\s\S]{0,300}?\bSent:\s/i);   // Outlook quote header
+  if (m) cuts.push(m.index);
+  m = body.match(/\bOn\b[\s\S]{0,160}?\bwrote:/i);            // Gmail quote header
+  if (m) cuts.push(m.index);
+  return (cuts.length ? body.slice(0, Math.min(...cuts)) : body).trim();
+}
+
 // Wrap any bare exocad webview URLs in <a> tags so the link is clickable in
 // the preview even when the email template pasted it as plain text.
 // Also strips the in-body "View Design in exocad WebView" button — the
@@ -1194,6 +1208,27 @@ function renderOutboundCard(r) {
     } else if (r.triage_bucket === 'pending_approval') {
       triageChip = '<span class="triage-chip confirmed" title="Confirmed contact since this draft via implants@/clearchoice@ (shared mailbox)">✓ reached doctor</span>';
     }
+    // Most recent communication on the case — any medium (email / phone / note),
+    // regardless of age — shown with its full details (the same content the Case
+    // Lookup timeline shows). Rendered as a lighter-yellow sub-card to the left
+    // of Account Preferences.
+    let commBody = (r.most_recent_comm_body || '').replace(/\r\n?/g, '\n').trim();
+    // Emails store the whole thread — show only the most recent message's body.
+    if (r.most_recent_comm_medium === 'email') commBody = topEmailMessage(commBody);
+    const commSubject = (r.most_recent_comm_subject || '').trim();
+    const hasNote = !!(commBody || commSubject);
+    const COMM_MEDIUM_ICON = { phone: '📞', email: '✉️', note: '📝' };
+    const commIcon = COMM_MEDIUM_ICON[r.most_recent_comm_medium] || '';
+    const commMeta = [r.most_recent_comm_actor, r.most_recent_comm_at ? fmtDate(r.most_recent_comm_at) : '']
+      .filter(Boolean).map(esc).join(' · ');
+    const noteCard = hasNote ? `
+      <div class="note-banner">
+        <div class="label">${commIcon ? commIcon + ' ' : ''}Most Recent Communication</div>
+        ${commMeta ? `<div class="note-meta">${commMeta}</div>` : ''}
+        ${commSubject ? `<div class="note-subject">${esc(commSubject)}</div>` : ''}
+        ${commBody ? `<div class="text">${esc(commBody)}</div>` : ''}
+      </div>` : '';
+    const hasSide = !!(r.account_preferences || r.prefs_summary_headline || hasNote);
     return `
     <div class="item reason-${r.reason}" data-id="${r.attempt_id}">
       <div class="item-head" onclick="toggleItem('${r.attempt_id}')">
@@ -1219,23 +1254,28 @@ function renderOutboundCard(r) {
         </div>
       </div>
       <div class="item-body">
-        <div class="outbound-detail-row ${r.account_preferences ? '' : 'no-prefs'}">
+        <div class="outbound-detail-row ${hasSide ? '' : 'no-prefs'}">
           <div class="preview">
             <div class="preview-subject">${esc(r.subject)}</div>
             ${buildOutboundBody(r.body_html, r.exocad_viewer_url)}
           </div>
-          ${r.account_preferences || r.prefs_summary_headline ? `
-            <div class="prefs-banner">
-              <div class="label">Account Preferences ${r.prefs_auto ? '(auto)' : '(curated)'}</div>
-              ${r.prefs_summary_headline ? `
-                <div class="summary-headline">${esc(r.prefs_summary_headline)}</div>
-                ${r.prefs_summary_detail ? `<div class="summary-detail">${esc(r.prefs_summary_detail)}</div>` : ''}
-                ${r.account_preferences ? '<hr class="summary-divider" />' : ''}
-              ` : (r.account_preferences ? `
-                <div class="summary-placeholder">Summarizing in the background…</div>
-                <hr class="summary-divider" />
-              ` : '')}
-              ${r.account_preferences ? `<div class="text">${esc(r.account_preferences)}</div>` : ''}
+          ${hasSide ? `
+            <div class="outbound-side">
+              ${noteCard}
+              ${r.account_preferences || r.prefs_summary_headline ? `
+                <div class="prefs-banner">
+                  <div class="label">Account Preferences ${r.prefs_auto ? '(auto)' : '(curated)'}</div>
+                  ${r.prefs_summary_headline ? `
+                    <div class="summary-headline">${esc(r.prefs_summary_headline)}</div>
+                    ${r.prefs_summary_detail ? `<div class="summary-detail">${esc(r.prefs_summary_detail)}</div>` : ''}
+                    ${r.account_preferences ? '<hr class="summary-divider" />' : ''}
+                  ` : (r.account_preferences ? `
+                    <div class="summary-placeholder">Summarizing in the background…</div>
+                    <hr class="summary-divider" />
+                  ` : '')}
+                  ${r.account_preferences ? `<div class="text">${esc(r.account_preferences)}</div>` : ''}
+                </div>
+              ` : ''}
             </div>
           ` : ''}
         </div>
