@@ -1776,6 +1776,35 @@
   }
   .inbound-count { display: none; } /* total label retired by request */
 
+  /* Time-sensitive filter toggle (Pending Replies toolbar) */
+  .ts-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-left: 14px; cursor: pointer; user-select: none;
+  }
+  .ts-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .ts-track {
+    position: relative; flex: none;
+    width: 38px; height: 20px;
+    background: var(--slate-light); border-radius: 999px;
+    transition: background 0.15s;
+  }
+  .ts-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--white); box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    transition: transform 0.15s;
+  }
+  .ts-toggle input:checked + .ts-track { background: var(--red); }
+  .ts-toggle input:checked + .ts-track .ts-thumb { transform: translateX(18px); }
+  .ts-toggle input:focus-visible + .ts-track { box-shadow: 0 0 0 3px var(--blue-soft); }
+  .ts-text {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 1px; text-transform: uppercase;
+    color: var(--slate); transition: color 0.15s;
+  }
+  .ts-toggle input:checked ~ .ts-text { color: var(--red); }
+
   /* Hidden senders manager (sits on the right of the chip row) */
   .hidden-senders-wrap { position: relative; margin-left: auto; }
   .hidden-senders-btn {
@@ -3253,6 +3282,11 @@
         </button>
         <div class="custom-dd-menu" id="inbound-case-menu" role="listbox"></div>
       </div>
+      <label class="ts-toggle" title="Show only time-sensitive replies flagged for a phone call">
+        <input type="checkbox" id="inbound-ts-toggle" onchange="toggleInboundTimeSensitive(this.checked)" />
+        <span class="ts-track"><span class="ts-thumb"></span></span>
+        <span class="ts-text">Time-sensitive only</span>
+      </label>
       <div class="hidden-senders-wrap" id="hidden-senders-wrap">
       <button class="hidden-senders-btn" onclick="toggleHiddenSenders(event)" aria-label="Manage hidden senders">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
