@@ -47,9 +47,21 @@ export const CAPABILITIES = {
   TAB_EDITLOG:      'tab.editlog',     // Edit Log         (data-tab="editlog")
   METRICS:          'metrics',         // KPI strip + Metrics modal button
   OUTBOUND_REVENUE: 'outbound.revenue',// Revenue chip/sort/filter in Outbound
+  VIEW_CASE_SUGGESTION: 'inbound.case_suggestion', // AI case-# chip/buttons on unmatched Pending Replies (admin + executive)
+  HIDE_SENDER:          'inbound.hide_sender',     // Add/remove hidden senders (admin + executive + manager). Viewing the list is NOT gated.
 };
 
 const C = CAPABILITIES;
+
+// Restricted capabilities: deliberately EXCLUDED from the blanket ALL_CAPS so the
+// broad full-access roles (account_manager/manager) don't pick them up via
+// Object.values(CAPABILITIES). They are granted explicitly per role below.
+//   VIEW_CASE_SUGGESTION -> admin (via can() short-circuit) + executive (explicit).
+//   HIDE_SENDER          -> admin (via can() short-circuit) + executive + manager (explicit).
+const RESTRICTED_CAPS = [
+  C.VIEW_CASE_SUGGESTION,
+  C.HIDE_SENDER,
+];
 
 // Capabilities granted to the two non-privileged limited roles.
 // account_manager / manager / executive / admin get everything (see below).
@@ -71,16 +83,19 @@ const CASE_ENTRY_CAPS = [
   // No outbound, inbound, audit, editlog, metrics.
 ];
 
-// Full capability set — account_manager and above see the whole app.
-const ALL_CAPS = Object.values(CAPABILITIES);
+// Full capability set — account_manager and above see the whole app, EXCEPT
+// restricted capabilities (granted explicitly per role below).
+const ALL_CAPS = Object.values(CAPABILITIES).filter(c => !RESTRICTED_CAPS.includes(c));
 
 // ---- Role -> capability set (encodes both matrices) ----
 export const ROLE_CAPABILITIES = {
   [ROLES.DESIGN_APPROVER]: new Set(DESIGN_APPROVER_CAPS),
   [ROLES.CASE_ENTRY]:      new Set(CASE_ENTRY_CAPS),
   [ROLES.ACCOUNT_MANAGER]: new Set(ALL_CAPS),
-  [ROLES.MANAGER]:         new Set(ALL_CAPS),
-  [ROLES.EXECUTIVE]:       new Set(ALL_CAPS),
+  // Manager additionally can hide/unhide senders.
+  [ROLES.MANAGER]:         new Set([...ALL_CAPS, C.HIDE_SENDER]),
+  // Executive additionally sees the AI case-number suggestion and can hide senders.
+  [ROLES.EXECUTIVE]:       new Set([...ALL_CAPS, C.VIEW_CASE_SUGGESTION, C.HIDE_SENDER]),
   [ROLES.ADMIN]:           new Set(ALL_CAPS), // admin also short-circuits in can()
 };
 

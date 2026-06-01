@@ -2401,6 +2401,11 @@
   .match-chip.escalate {
     background: #FEE2E2; color: #991B1B;
   }
+  /* AI case suggestion (admin-only, advisory) — distinct indigo tone */
+  .match-chip.suggestion {
+    background: #EEF2FF; color: #3730A3; border: 1px solid #C7D2FE; cursor: help;
+  }
+  .suggestion-use { margin-left: 2px; }
 
   /* ===== Case Lookup AI summary + print event blocks ===== */
   .case-summary-box {
@@ -2915,6 +2920,7 @@
   .match-chip          { background: #F1F5F9; color: #334155; border-color: #CBD5E1; }
   .match-chip.low      { background: #FEF3C7; color: #92400E; border-color: #FDE68A; }
   .match-chip.escalate { background: #FEE4E4; color: #B91C1C; border-color: #FBC7C7; }
+  .match-chip.suggestion { background: #E0E7FF; color: #3730A3; border-color: #C7D2FE; }
 
   /* Unmatched "Needs case lookup" case badge */
   .case.nolink-case { background: #FEF3C7; color: #92400E; border-color: #FDE68A; }
