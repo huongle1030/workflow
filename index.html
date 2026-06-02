@@ -2317,6 +2317,39 @@
     margin-left: 6px;
   }
 
+  /* ===== Admin Approvals modal ===== */
+  .approvals-empty, .approvals-loading {
+    padding: 30px; text-align: center;
+    color: var(--slate); font-style: italic;
+  }
+  .approvals-empty strong { color: var(--navy); font-style: normal; }
+  .appr-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .appr-btn {
+    border: none; cursor: pointer;
+    padding: 7px 18px; border-radius: 6px;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+    color: white; font-family: 'Montserrat', sans-serif;
+    transition: background 0.15s;
+  }
+  .appr-btn:disabled { opacity: 0.6; cursor: default; }
+  .appr-btn.yes { background: var(--green); }
+  .appr-btn.yes:hover { background: #157031; }
+  .appr-btn.no  { background: var(--red); }
+  .appr-btn.no:hover  { background: #A0341A; }
+  .appr-role-chip {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 11px; font-weight: 700;
+    background: var(--pale); color: var(--blue);
+  }
+  /* Count badge on the appbar "Approvals" link */
+  .appbar-link .appr-count {
+    display: inline-block; margin-left: 5px;
+    background: var(--gold); color: white;
+    border-radius: 10px; padding: 0 7px;
+    font-size: 11px; font-weight: 800; line-height: 18px;
+    vertical-align: middle;
+  }
+
   /* ===== Metrics modal ===== */
   .metrics-panel { max-width: 1200px; width: 96%; }
   .metrics-panel .modal-body { padding: 0; }
@@ -3189,6 +3222,8 @@
   </div>
   <div class="appbar-right">
     <div class="appbar-actions">
+      <button type="button" class="appbar-link hidden" id="approvals-btn" onclick="openApprovals()">Approvals<span class="appr-count" id="approvals-count" style="display:none;"></span></button>
+      <span class="appbar-sep hidden" id="approvals-sep" aria-hidden="true">|</span>
       <button type="button" class="appbar-link" id="tour-btn" onclick="startTour()">Tour</button>
       <span class="appbar-sep" aria-hidden="true">|</span>
       <button type="button" class="appbar-link" id="metrics-btn" onclick="openMetrics()">Metrics</button>
@@ -3394,8 +3429,9 @@
       </select>
     </div>
   </div>
-  <p style="color: var(--slate); font-size: 12px; margin-bottom: 10px;">Daily totals of how coordinators have been handling pending items. Approved / Edited / Rejected count coordinator review actions (high edit rate = template needs work). <strong>Auto-canceled</strong> are drafts the system stood down on its own because the case already advanced past doctor design approval — or shipped — in ABS; these are not coordinator rejections.</p>
+  <p style="color: var(--slate); font-size: 12px; margin-bottom: 10px;">Daily totals of design-approval activity. <strong>Approved</strong> counts unique cases the doctor approved — whether through the email-review flow here, advanced past doctor design approval in ABS, or logged as “Dr Approved” in Case Coordination (overlap counted once). <strong>Edited / Rejected</strong> count coordinator review actions in the email flow (high edit rate = template needs work).</p>
   <div id="list-audit"><div class="loading">Loading…</div></div>
+  <p style="color: var(--slate); font-size: 12px; margin-top: 10px; line-height: 1.5;"><strong>About Auto-canceled:</strong> drafts the system stood down on its own because the case is no longer active in ABS (e.g., dropped, remade, or closed) — <em>not</em> coordinator rejections and <em>not</em> approvals. Cases that advanced past doctor design approval are no longer counted here; they now appear under <strong>Approved</strong>.</p>
 </div>
 
 <div class="panel hidden" id="panel-reschedule">
@@ -3814,6 +3850,23 @@ Clean margins are needed before we can proceed with the design"></textarea>
 </div>
 
 <!-- Metrics · By Doctor modal — opened from the appbar 📊 button. -->
+<!-- Admin Approvals modal — opens from the "Approvals" link (admins only). -->
+<div class="modal-overlay" id="approvals-modal" onclick="if(event.target===this)closeApprovals()">
+  <div class="modal-panel" style="max-width: 880px;">
+    <div class="modal-header">
+      <h3>Pending Approvals</h3>
+      <button class="modal-close" onclick="closeApprovals()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body" id="approvals-body">
+      <div class="approvals-loading">Loading…</div>
+    </div>
+    <div class="modal-footer">
+      <button class="refresh-btn" onclick="refreshApprovals()" style="background: var(--blue);">Refresh</button>
+      <button class="refresh-btn" onclick="closeApprovals()" style="background: var(--slate);">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="metrics-modal" onclick="if(event.target===this)closeMetrics()">
   <div class="modal-panel metrics-panel">
     <div class="modal-header">

@@ -3,7 +3,7 @@
 // =====================================================================
 import './auth.css';
 import { initAuth, getCurrentEmployee, signOut as authSignOut, getAccessToken } from './auth.js';
-import { can, CAPABILITIES } from './permissions.js';
+import { can, CAPABILITIES, getCurrentRole, ROLE_LABELS, ROLES } from './permissions.js';
 
 // =====================================================================
 // Configuration
@@ -727,7 +727,7 @@ async function loadAudit() {
   let rows;
   if (inCowork) {
     rows = await runMcpSql(
-      "SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day, approved, edited, rejected, auto_canceled, total_reviewed " +
+      "SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day, approved, edited, rejected, auto_canceled, total_reviewed, coord_reviewed " +
       "FROM v_review_audit WHERE day >= '" + cutoffISO + "' ORDER BY day DESC"
     );
   } else {
@@ -735,9 +735,26 @@ async function loadAudit() {
   }
 
   state.audit = rows;
-  const tot      = rows.reduce((a, r) => a + (r.total_reviewed || 0), 0);
-  const approved = rows.reduce((a, r) => a + (r.approved || 0), 0);
+  // Edit rate measures coordinator review behavior, so its denominator stays the
+  // coordinator review actions (human approved + edited + rejected) via
+  // coord_reviewed — NOT the combined approved total, which now includes ABS /
+  // Case Coordination approvals that never passed through the email-review flow.
+  const tot      = rows.reduce((a, r) => a + (r.coord_reviewed || 0), 0);
   const edited   = rows.reduce((a, r) => a + (r.edited || 0), 0);
+
+  // Approved KPI = UNIQUE cases approved either via the email-review flow OR
+  // logged as a doctor sign-off ("Dr Approved") in Case Coordination, within the
+  // same window. v_combined_approved_cases normalizes case numbers across both
+  // sources; we dedupe here so a case approved in both places counts once.
+  let approvedRows;
+  if (inCowork) {
+    approvedRows = await runMcpSql(
+      "SELECT case_number FROM v_combined_approved_cases WHERE approved_on >= '" + cutoffISO + "'"
+    );
+  } else {
+    approvedRows = await restGet('/rest/v1/v_combined_approved_cases?approved_on=gte.' + cutoffISO + '&select=case_number&limit=50000');
+  }
+  const approved = new Set((approvedRows || []).map(r => r.case_number)).size;
   const label = days === 1 ? '24h' : days + 'd';
   document.getElementById('stat-app').textContent  = approved;
   document.getElementById('stat-edit').textContent = tot ? Math.round(100 * edited / tot) + '%' : '–';
@@ -754,6 +771,15 @@ function fmtDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
          d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+// Format a date-only value ('YYYY-MM-DD', or an ISO timestamp) as a local
+// calendar date with no timezone shift. Used by the Review Audit day column.
+function fmtDayOnly(v) {
+  if (!v) return '';
+  const s = String(v).slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString();
+  return new Date(v).toLocaleDateString();
 }
 function esc(s) {
   if (s === null || s === undefined) return '';
@@ -1919,7 +1945,9 @@ function renderAudit() {
       <div class="col-label" style="color:rgba(255,255,255,.85);">Total</div>
     </div>`;
   const rows = state.audit.map(r => {
-    const dayStr = r.day ? new Date(r.day).toLocaleDateString() : '';
+    // r.day is a date-only string ('YYYY-MM-DD'); parse as a LOCAL date so the
+    // displayed day doesn't shift back one in negative-offset timezones.
+    const dayStr = fmtDayOnly(r.day);
     return `
       <div class="audit-row">
         <div class="col-val" style="font-size:13px;color:var(--charcoal);font-weight:600;">${esc(dayStr)}</div>
@@ -2498,6 +2526,13 @@ function applyPermissions() {
 
   // 3) Pending Outbound revenue features (chip/sort/filter).
   applyOutboundRevenuePermission();
+
+  // 3b) Admin Approvals link (appbar) — admins only. Populate the count badge
+  //     on boot so admins see pending requests without opening the modal.
+  const isAdmin = isApprovalsAdmin();
+  document.getElementById('approvals-btn')?.classList.toggle('hidden', !isAdmin);
+  document.getElementById('approvals-sep')?.classList.toggle('hidden', !isAdmin);
+  if (isAdmin) refreshApprovals();
 
   // 4) If the currently-active outreach tab isn't permitted, land on the first
   //    one that is.
@@ -3240,7 +3275,15 @@ function formatPstParts(value, opts) {
   if (!value) return { date: '', time: '' };
   const includeYear = !opts || opts.year !== false;
   let s = String(value).trim();
-  const hasTime = /[T ]\d{1,2}:/.test(s);
+  let hasTime = /[T ]\d{1,2}:/.test(s);
+  // A timestamp sitting exactly at 00:00:00 UTC is almost always a date that was
+  // written into a timestamptz column (no real time-of-day). Showing it in
+  // Pacific would invent a "5:00 PM" and shift the day back, so treat it as a
+  // plain date: keep the calendar day, drop the bogus time.
+  if (hasTime && /[T ]00:00:00(\.0+)?(Z|\+00(:00)?)$/.test(s)) {
+    s = s.slice(0, 10);
+    hasTime = false;
+  }
   if (hasTime) {
     s = s.replace(/([+-]\d{2})$/, '$1:00').replace(' ', 'T');
   } else {
@@ -3273,10 +3316,11 @@ function renderLogTable(logs) {
       '<col style="width:28%">' +    // Notes (expanded)
       '<col style="width:5%">' +     // Delete button
     '</colgroup>' +
-    '<thead><tr><th>Case ID</th><th>Action</th><th>Coordinator</th><th>Date</th><th>Notes</th><th></th></tr></thead><tbody>' +
+    '<thead><tr><th>Case ID</th><th>Action</th><th>Coordinator</th><th>Date (PST)</th><th>Notes</th><th></th></tr></thead><tbody>' +
     logs.map(l => {
-      // Prefer the timestamp (has time); fall back to log_date (date only).
-      const parts = formatPstParts(l.created_date || l.log_date);
+      // Prefer the most recent timestamp (has time), then created, then the
+      // date-only log_date. Rendered in Pacific time by formatPstParts.
+      const parts = formatPstParts(l.updated_date || l.created_date || l.log_date);
       const dateCell = parts.time
         ? esc(parts.date) + '<span style="display:inline-block; width:14px;"></span>' + esc(parts.time)
         : esc(parts.date);
@@ -3565,7 +3609,11 @@ function genId() {
 // Only non-empty fields are written so callers can't blank out other columns.
 async function upsertCase(fields) {
   if (!fields || !fields.case_id) return;
-  const f = { ...fields, updated_date: fields.updated_date || pacificDate() };
+  // created_date / updated_date are timestamptz — store full ISO instants (real
+  // time-of-day), NOT pacificDate() (date-only), which Postgres coerces to 00:00
+  // UTC and the UI then renders as a bogus "5:00 PM" on the prior day.
+  const nowIso = new Date().toISOString();
+  const f = { ...fields, updated_date: fields.updated_date || nowIso };
   const body = {};
   Object.keys(f).forEach(k => {
     if (f[k] !== undefined && f[k] !== '' && f[k] !== null) body[k] = f[k];
@@ -3577,6 +3625,7 @@ async function upsertCase(fields) {
   if (existing && existing.id) {
     const update = { ...body };
     delete update.case_id;
+    delete update.created_date;   // never overwrite the original creation time on update
     if (!Object.keys(update).length) return;
     if (inCowork) {
       const setClause = Object.keys(update).map(c => '"' + c + '" = ' + sqlVal(update[c])).join(', ');
@@ -3595,6 +3644,7 @@ async function upsertCase(fields) {
     }
   } else {
     body.id = genId();
+    if (!body.created_date) body.created_date = nowIso;  // stamp the creation time on first insert
     if (inCowork) {
       const cols = Object.keys(body);
       const colList = cols.map(c => '"' + c + '"').join(', ');
@@ -3626,12 +3676,16 @@ async function submitLog() {
   const stage    = document.getElementById('log-stage').value;
   if (!caseId || !action) { toast('Case ID and action are required', 'err'); return; }
   const me = loginIdentity();
+  // Stamp the moment of entry (UTC ISO; the table renders it in PST). The DB also
+  // defaults/triggers these, but set them here so the REST insert records them too.
+  const nowIso = new Date().toISOString();
   const row = {
     id: genId(),
     case_id: caseId, action_type: action,
     coordinator: coord || null, log_date: dt || pacificDate(),
     notes: notes || null,
     created_by: me.name, created_by_id: me.email,
+    created_date: nowIso, updated_date: nowIso,
   };
   try {
     if (inCowork) {
@@ -4133,7 +4187,7 @@ const TOUR_STEPS = [
 
   { title: "Click Audit", body: "Open the last Outreach tab.",
     selector: '#tabs-outreach .tab[data-tab="audit"]', placement: 'bottom', requireClick: true },
-  { title: "Spot patterns", body: "Approve, edit, and reject rates over a selectable window — high edit rate means the template needs work. Auto-canceled is a separate column: drafts the system retired because the case already advanced past approval or shipped in ABS.",
+  { title: "Spot patterns", body: "Approved counts unique doctor approvals across the email flow, ABS, and Case Coordination (overlap counted once). Edited/Rejected are coordinator review actions — high edit rate means the template needs work. Auto-canceled is a separate column: drafts the system retired because the case is no longer active in ABS (not approvals, not rejections).",
     selector: '#panel-audit', placement: 'top' },
 
   // Switch to CC
@@ -4678,6 +4732,115 @@ function printCallNotes() {
   setTimeout(() => window.print(), 80);
 }
 
+// =====================================================================
+// Admin Approvals — review people who self-requested a role.
+// Visible only to admins (appbar "Approvals" link). Reads pending rows
+// (role_approval = false, active = true) from the employees table; "Yes"
+// approves (role_approval = true), "No" rejects (active = false). The legacy
+// seed rows have role_approval = null and are intentionally excluded.
+// =====================================================================
+let approvalsRows = null;
+
+function isApprovalsAdmin() { return getCurrentRole() === ROLES.ADMIN; }
+
+// Fetch pending requests, refresh the appbar count badge, and (re)render the
+// modal table if it's open. Used on boot, on open, and after each action.
+async function refreshApprovals() {
+  if (!isApprovalsAdmin()) return;
+  const rows = await restGet(
+    '/rest/v1/employees?select=id,name,email,role,created_at' +
+    '&role_approval=eq.false&active=eq.true&order=created_at.desc'
+  ) || [];
+  approvalsRows = rows;
+
+  const badge = document.getElementById('approvals-count');
+  if (badge) {
+    if (rows.length) { badge.textContent = String(rows.length); badge.style.display = ''; }
+    else { badge.style.display = 'none'; }
+  }
+  renderApprovals();
+}
+
+function renderApprovals() {
+  const body = document.getElementById('approvals-body');
+  if (!body) return;
+  const rows = approvalsRows || [];
+  if (!rows.length) {
+    body.innerHTML = '<div class="approvals-empty"><strong>All caught up.</strong><br/>No one is waiting for approval.</div>';
+    return;
+  }
+  const trs = rows.map(r => {
+    const roleLabel = ROLE_LABELS[r.role] || r.role || '—';
+    const id = esc(r.id);
+    return `<tr>
+      <td>${esc(r.name || '—')}</td>
+      <td class="muted">${esc(r.email || '—')}</td>
+      <td><span class="appr-role-chip">${esc(roleLabel)}</span></td>
+      <td><div class="appr-actions">
+        <button class="appr-btn yes" onclick="approveEmployee('${id}')">Yes</button>
+        <button class="appr-btn no" onclick="rejectEmployee('${id}')">No</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  body.innerHTML =
+    '<table class="cc-table">' +
+      '<thead><tr><th>Name</th><th>Email</th><th>Requested Role</th>' +
+      '<th style="text-align:right;">Approve?</th></tr></thead>' +
+      '<tbody>' + trs + '</tbody>' +
+    '</table>';
+}
+
+async function openApprovals() {
+  if (!isApprovalsAdmin()) return;
+  const modal = document.getElementById('approvals-modal');
+  if (!modal) return;
+  modal.classList.add('open');
+  const body = document.getElementById('approvals-body');
+  if (body) body.innerHTML = '<div class="approvals-loading">Loading…</div>';
+  await refreshApprovals();
+}
+
+function closeApprovals() {
+  document.getElementById('approvals-modal')?.classList.remove('open');
+}
+
+// Shared PATCH against a single employees row. Returns true on success.
+async function patchEmployee(id, patch) {
+  const cfg = getConfig();
+  if (!cfg.key) { needsConfig(); return false; }
+  const res = await fetch(cfg.url + '/rest/v1/employees?id=eq.' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: {
+      apikey: cfg.key, Authorization: 'Bearer ' + cfg.key,
+      'Content-Type': 'application/json', Prefer: 'return=minimal',
+    },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + (await res.text()).slice(0, 200));
+  return true;
+}
+
+async function approveEmployee(id) {
+  if (!isApprovalsAdmin()) return;
+  try {
+    await patchEmployee(id, { role_approval: true });
+    toast('Access approved', 'ok');
+    await refreshApprovals();
+  } catch (e) { toast('Approve failed: ' + (e.message || e), 'err'); }
+}
+
+async function rejectEmployee(id) {
+  if (!isApprovalsAdmin()) return;
+  const row = (approvalsRows || []).find(r => String(r.id) === String(id));
+  const who = row ? (row.name || row.email || 'this person') : 'this person';
+  if (!window.confirm('Reject access for ' + who + '? They will not be able to use the app.')) return;
+  try {
+    await patchEmployee(id, { active: false });
+    toast('Request rejected', 'ok');
+    await refreshApprovals();
+  } catch (e) { toast('Reject failed: ' + (e.message || e), 'err'); }
+}
+
 // main.js is a type="module" — top-level declarations are scoped to the module
 // and not visible in the global window. Inline onclick="fn()" handlers need
 // these functions on window, so we assign them explicitly here.
@@ -4720,6 +4883,8 @@ Object.assign(window, {
   generatePrefSummaries,
   // Metrics modal
   openMetrics, closeMetrics, loadMetrics, renderMetricsTable,
+  // Admin Approvals modal
+  openApprovals, closeApprovals, refreshApprovals, approveEmployee, rejectEmployee,
   // Call Notes modal
   openCallNotes, closeCallNotes, generateCallSummary, printCallNotes,
   // Auth
