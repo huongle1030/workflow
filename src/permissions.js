@@ -14,22 +14,24 @@ import { getCurrentEmployee } from './auth.js';
 
 // ---- Roles (DB employees.role value) ----
 export const ROLES = {
-  DESIGN_APPROVER: 'design_approver',
-  CASE_ENTRY:      'case_entry',
-  ACCOUNT_MANAGER: 'account_manager',
-  MANAGER:         'manager',
-  EXECUTIVE:       'executive',
-  ADMIN:           'admin',
+  DESIGN_APPROVER:   'design_approver',
+  CASE_ENTRY:        'case_entry',
+  ACCOUNT_MANAGER:   'account_manager',
+  TECHNICAL_ADVISOR: 'technical_advisor',
+  MANAGER:           'manager',
+  EXECUTIVE:         'executive',
+  ADMIN:             'admin',
 };
 
 // Human-readable labels for every role (including admin-assigned ones).
 export const ROLE_LABELS = {
-  [ROLES.DESIGN_APPROVER]: 'Design Approver',
-  [ROLES.CASE_ENTRY]:      'Case Entry/Review',
-  [ROLES.ACCOUNT_MANAGER]: 'Account Manager',
-  [ROLES.MANAGER]:         'Manager',
-  [ROLES.EXECUTIVE]:       'Executive',
-  [ROLES.ADMIN]:           'Admin',
+  [ROLES.DESIGN_APPROVER]:   'Design Approver',
+  [ROLES.CASE_ENTRY]:        'Case Entry/Review',
+  [ROLES.ACCOUNT_MANAGER]:   'Account Manager',
+  [ROLES.TECHNICAL_ADVISOR]: 'Technical Advisor',
+  [ROLES.MANAGER]:           'Manager',
+  [ROLES.EXECUTIVE]:         'Executive',
+  [ROLES.ADMIN]:             'Admin',
 };
 
 // ---- Capability keys ----
@@ -92,6 +94,8 @@ export const ROLE_CAPABILITIES = {
   [ROLES.DESIGN_APPROVER]: new Set(DESIGN_APPROVER_CAPS),
   [ROLES.CASE_ENTRY]:      new Set(CASE_ENTRY_CAPS),
   [ROLES.ACCOUNT_MANAGER]: new Set(ALL_CAPS),
+  // Technical Advisor mirrors Account Manager exactly (same full access set).
+  [ROLES.TECHNICAL_ADVISOR]: new Set(ALL_CAPS),
   // Manager additionally can hide/unhide senders.
   [ROLES.MANAGER]:         new Set([...ALL_CAPS, C.HIDE_SENDER]),
   // Executive additionally sees the AI case-number suggestion and can hide senders.

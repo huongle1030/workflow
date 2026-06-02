@@ -21,6 +21,7 @@ export const ROLE_OPTIONS = [
   { value: 'design_approver',  label: 'Design Approver' },
   { value: 'case_entry',       label: 'Case Entry/Review' },
   { value: 'account_manager',  label: 'Account Manager' },
+  { value: 'technical_advisor', label: 'Technical Advisor' },
   { value: 'manager',          label: 'Manager' },
 ];
 
