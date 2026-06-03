@@ -183,6 +183,19 @@ serve(async (req) => {
       const fromAddr = msg.from?.emailAddress?.address ?? "";
       const html = msg.body?.contentType === "html" ? (msg.body?.content ?? "") : "";
       const text = msg.body?.contentType === "text" ? (msg.body?.content ?? "") : stripHtml(html);
+      const internetMsgId = msg.internetMessageId ?? null;
+
+      // Idempotency guard. Graph delivers change notifications at-least-once (it re-fires
+      // the same message seconds apart), and the same email also lands in several watched
+      // mailboxes (implants@, clearchoice@, MS_SENDER) — each a separate notification.
+      // internetMessageId (the RFC-822 Message-ID) is identical across every copy, so if
+      // we've already ingested it, skip: otherwise we create duplicate reply rows and the
+      // scan-ack composer drafts one ack per row (2–3 identical drafts in Pending Outbound).
+      if (internetMsgId) {
+        const { data: dup } = await sb.from("dr_outreach_replies")
+          .select("id").eq("internet_message_id", internetMsgId).limit(1).maybeSingle();
+        if (dup) continue;
+      }
 
       const caseNumber = extractCaseNumber(subject, text);
 
@@ -209,10 +222,15 @@ serve(async (req) => {
       const replyOnly = stripQuotedReply(text);
       const cls = await classifyReply(subject, replyOnly);
 
-      const { data: insertedReply } = await sb.from("dr_outreach_replies").insert({
+      // upsert + ignoreDuplicates is the race-safe backstop to the pre-check above: if two
+      // concurrent notifications for the same message slip past the SELECT, the unique index
+      // on internet_message_id makes the second a no-op (returns no row → insertedReply null,
+      // and the case/auto-confirm steps below are already guarded on insertedReply).
+      const { data: insertedReply } = await sb.from("dr_outreach_replies").upsert({
         queue_id: queueId,
         graph_message_id: msg.id,
         graph_conversation_id: msg.conversationId,
+        internet_message_id: internetMsgId,
         from_email: fromAddr,
         subject,
         body_text: text.slice(0, 50_000),
@@ -220,7 +238,7 @@ serve(async (req) => {
         ai_classification: cls.classification,
         ai_confidence: cls.confidence,
         ai_summary: cls.summary,
-      }).select("id").single();
+      }, { onConflict: "internet_message_id", ignoreDuplicates: true }).select("id").maybeSingle();
 
       if (caseNumber && insertedReply) {
         await sb.rpc("record_outbox_inbound", {
