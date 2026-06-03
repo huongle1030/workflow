@@ -5,6 +5,13 @@ import './auth.css';
 import { initAuth, getCurrentEmployee, signOut as authSignOut, getAccessToken } from './auth.js';
 import { can, CAPABILITIES, getCurrentRole, ROLE_LABELS, ROLES } from './permissions.js';
 
+// Coordinator-uploaded PDF attachments, keyed by attempt_id. Populated in loadOutbound()
+// (bulk read of dr_outreach_attempt_attachments) and rendered as chips + a drop zone on
+// Pending Outbound / Pending Approval cards. uploadingByAttempt gates Send while a file is
+// still uploading so an email never goes out without its attachment.
+const attachmentsByAttempt = {};
+const uploadingByAttempt = {};
+
 // =====================================================================
 // Configuration
 // =====================================================================
@@ -31,7 +38,27 @@ const REASON_LABEL = {
   missing_info: 'Missing Info',
   waiting_on_parts: 'Waiting on Parts',
   reschedule_check: 'Reschedule Check',
+  scan_submission_ack: 'Scan Submission',
 };
+
+// Strategic partners temporarily hidden from the UI (we're not working these yet). Rows for
+// these partners are filtered out of every email tab (Pending Outbound / Approval / Replies)
+// and from the partner filter dropdown. Case-insensitive match on strategic_partner.
+const HIDDEN_PARTNERS = new Set(['skdla-tri dental']);
+function isHiddenPartner(p) { return HIDDEN_PARTNERS.has(String(p || '').trim().toLowerCase()); }
+
+// The partner dropdown also offers a mailbox-based "Implants" bucket (emails sent from
+// implants@skdla.com). It's always shown — even at 0 — and, because hidden partners (TRI)
+// are already filtered out of the data, it never includes TRI cases.
+const IMPLANTS_FILTER_VALUE = '__implants__';
+const IMPLANTS_MAILBOX = 'implants@skdla.com';
+
+// "New/Unclassified Office" bucket: new scan submissions (reason scan_submission_ack) plus any
+// row with no strategic partner yet (office not classified). Also always shown in the dropdown.
+const NEW_OFFICE_FILTER_VALUE = '__new_unclassified__';
+function isNewOrUnclassified(r) {
+  return r.reason === 'scan_submission_ack' || !String(r.strategic_partner || '').trim();
+}
 
 let state = { outbound: [], inbound: [], audit: [] };
 let auditWindowDays = parseInt(localStorage.getItem('skdla_audit_window') || '7', 10);
@@ -675,17 +702,61 @@ async function loadOutbound() {
   } else {
     rows = await restGet('/rest/v1/v_pending_outbound_triage?select=*&limit=2000') || [];
   }
-  state.outboundAll = rows;
-  state.outbound = rows.filter(r => r.triage_bucket === 'outbound_only');
-  state.approval  = rows.filter(r => r.triage_bucket === 'pending_approval'
+  // Hide temporarily-disabled partners (e.g. SKDLA-TRI Dental) from every outbound view.
+  const visibleRows = rows.filter(r => !isHiddenPartner(r.strategic_partner));
+  state.outboundAll = visibleRows;
+  state.outbound = visibleRows.filter(r => r.triage_bucket === 'outbound_only');
+  state.approval  = visibleRows.filter(r => r.triage_bucket === 'pending_approval'
                                   || r.triage_bucket === 'pending_approval_unsure');
   document.getElementById('badge-out').textContent = state.outbound.length;
   document.getElementById('stat-out').textContent = state.outbound.length;
   const ba = document.getElementById('badge-approval');
   if (ba) ba.textContent = state.approval.length;
   updatePendingBadge();
+  await loadAttachmentsForOutbound();
+  await loadSenderMailboxesForOutbound();
   renderOutbound();
   renderApproval();
+}
+
+// Attach the real sender_mailbox (clearchoice@ / implants@) to each outbound/approval row so
+// the "Implants" filter bucket can key on the actual mailbox. The triage view doesn't expose
+// it, so we bulk-read it from dr_outreach_attempts by attempt_id.
+async function loadSenderMailboxesForOutbound() {
+  const all = [...(state.outbound || []), ...(state.approval || [])];
+  const ids = all.map(r => r.attempt_id).filter(Boolean);
+  if (!ids.length) return;
+  let rows = [];
+  try {
+    if (inCowork) {
+      const idSql = ids.map(id => `'${id}'`).join(',');
+      rows = await runMcpSql(`SELECT id, sender_mailbox FROM dr_outreach_attempts WHERE id IN (${idSql})`) || [];
+    } else {
+      rows = await restGet(`/rest/v1/dr_outreach_attempts?select=id,sender_mailbox&id=in.(${ids.join(',')})`) || [];
+    }
+  } catch (e) { console.error('loadSenderMailboxesForOutbound failed:', e); return; }
+  const map = {};
+  for (const r of rows) map[r.id] = r.sender_mailbox;
+  for (const r of all) r.sender_mailbox = map[r.attempt_id] || null;
+}
+
+// Bulk-load coordinator attachments for every visible outbound/approval attempt so the cards
+// can show file chips. Metadata only (no bytes); the sender downloads the actual files.
+async function loadAttachmentsForOutbound() {
+  for (const k of Object.keys(attachmentsByAttempt)) delete attachmentsByAttempt[k];
+  const ids = [...(state.outbound || []), ...(state.approval || [])]
+    .map(r => r.attempt_id).filter(Boolean);
+  if (!ids.length) return;
+  let rows = [];
+  try {
+    if (inCowork) {
+      const idSql = ids.map(id => `'${id}'`).join(',');
+      rows = await runMcpSql(`SELECT * FROM dr_outreach_attempt_attachments WHERE attempt_id IN (${idSql}) ORDER BY created_at`) || [];
+    } else {
+      rows = await restGet(`/rest/v1/dr_outreach_attempt_attachments?select=*&attempt_id=in.(${ids.join(',')})&order=created_at`) || [];
+    }
+  } catch (e) { console.error('loadAttachmentsForOutbound failed:', e); return; }
+  for (const r of rows) (attachmentsByAttempt[r.attempt_id] ||= []).push(r);
 }
 
 // Roll-up count on the "Pending" parent tab = outbound + approval + replies.
@@ -713,7 +784,8 @@ async function loadInbound() {
   } else {
     rows = await restGet('/rest/v1/v_pending_inbound?select=*&order=received_at.desc&limit=2000') || [];
   }
-  state.inbound = rows;
+  // Hide temporarily-disabled partners (e.g. SKDLA-TRI Dental) from Pending Replies too.
+  state.inbound = rows.filter(r => !isHiddenPartner(r.strategic_partner));
   updateInboundBadges();
   renderInbound();
 }
@@ -927,7 +999,7 @@ function buildOutboundBody(rawHtml, exocadUrl) {
 }
 
 // Sort + filter state for Pending Outbound
-const outboundFilter = { sort: 'revenue_desc', revenue: '', partner: '', search: '' };
+const outboundFilter = { sort: 'revenue_desc', revenue: '', partner: '', reason: '', search: '' };
 function setOutboundSort(value) { outboundFilter.sort = value; renderOutbound(); }
 // Outbound filter options shared by the custom dropdown
 const OUTBOUND_FILTER_OPTIONS = [
@@ -978,6 +1050,21 @@ function togglePartnerDd(ev) {
 }
 function closePartnerDd() {
   document.getElementById('outbound-partner-dd')?.classList.remove('open');
+}
+// Reason ("Type") filter — design approval / reschedule check / scan submission / etc.
+function setOutboundReason(value) {
+  outboundFilter.reason = value;
+  const dd = document.getElementById('outbound-reason-dd');
+  if (dd) dd.classList.toggle('has-value', !!value);
+  closeReasonDd();
+  renderOutbound();
+}
+function toggleReasonDd(ev) {
+  if (ev) ev.stopPropagation();
+  document.getElementById('outbound-reason-dd')?.classList.toggle('open');
+}
+function closeReasonDd() {
+  document.getElementById('outbound-reason-dd')?.classList.remove('open');
 }
 
 // ---------- Global search bar (filters the currently-active panel) ----------
@@ -1062,25 +1149,73 @@ function populatePartnerDropdown() {
   const counts = { '': rows.length };
   for (const r of rows) {
     const p = r.strategic_partner;
-    if (!p) continue;
+    if (!p || isHiddenPartner(p)) continue;
     counts[p] = (counts[p] || 0) + 1;
   }
-  const partners = Object.keys(counts).filter(k => k !== '').sort((a, b) => a.localeCompare(b));
+  // Mailbox-based "Implants" + "New/Unclassified Office" buckets — always offered, even at 0.
+  counts[IMPLANTS_FILTER_VALUE] = rows.filter(r => (r.sender_mailbox || '') === IMPLANTS_MAILBOX).length;
+  counts[NEW_OFFICE_FILTER_VALUE] = rows.filter(isNewOrUnclassified).length;
+  const SPECIAL_LABELS = { [IMPLANTS_FILTER_VALUE]: 'Implants', [NEW_OFFICE_FILTER_VALUE]: 'New/Unclassified Office' };
+  const labelFor = (v) => SPECIAL_LABELS[v] || v || 'All partners';
+  const special = new Set(['', IMPLANTS_FILTER_VALUE, NEW_OFFICE_FILTER_VALUE]);
+  const partners = Object.keys(counts).filter(k => !special.has(k)).sort((a, b) => a.localeCompare(b));
   const current = outboundFilter.partner || '';
 
-  labelEl.textContent = current || 'All partners';
+  labelEl.textContent = labelFor(current);
   const btnCount = counts[current] ?? rows.length;
   btnCountEl.textContent = btnCount;
   btnCountEl.classList.toggle('zero', btnCount === 0);
 
-  const items = [{ value: '', label: 'All partners' }]
-    .concat(partners.map(p => ({ value: p, label: p })));
+  const items = [
+    { value: '', label: 'All partners' },
+    { value: IMPLANTS_FILTER_VALUE, label: 'Implants' },
+    { value: NEW_OFFICE_FILTER_VALUE, label: 'New/Unclassified Office' },
+  ].concat(partners.map(p => ({ value: p, label: p })));
   menuEl.innerHTML = items.map(o => {
     const c = counts[o.value] ?? 0;
     const sel = o.value === current ? ' selected' : '';
     const zero = c === 0 ? ' zero' : '';
     const safeValue = (o.value || '').replace(/'/g, "\\'");
     return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setOutboundPartner('${safeValue}')">
+      <span>${esc(o.label)}</span>
+      <span class="chip-count${zero}">${c}</span>
+    </div>`;
+  }).join('');
+}
+
+// Reason ("Type") filter dropdown — options built from the reasons actually present
+// in the current outbound set (e.g. Design Approval, Reschedule Check, Scan Submission),
+// each with a live count, plus an "All types" reset.
+function populateReasonDropdown() {
+  const rows = state.outbound || [];
+  const labelEl    = document.getElementById('outbound-reason-label');
+  const btnCountEl = document.getElementById('outbound-reason-count');
+  const menuEl     = document.getElementById('outbound-reason-menu');
+  if (!labelEl || !btnCountEl || !menuEl) return;
+
+  const counts = { '': rows.length };
+  for (const r of rows) {
+    if (!r.reason) continue;
+    counts[r.reason] = (counts[r.reason] || 0) + 1;
+  }
+  const reasons = Object.keys(counts)
+    .filter(k => k !== '')
+    .sort((a, b) => (REASON_LABEL[a] || a).localeCompare(REASON_LABEL[b] || b));
+  const current = outboundFilter.reason || '';
+
+  labelEl.textContent = current ? (REASON_LABEL[current] || current) : 'All types';
+  const btnCount = counts[current] ?? rows.length;
+  btnCountEl.textContent = btnCount;
+  btnCountEl.classList.toggle('zero', btnCount === 0);
+
+  const items = [{ value: '', label: 'All types' }]
+    .concat(reasons.map(k => ({ value: k, label: REASON_LABEL[k] || k })));
+  menuEl.innerHTML = items.map(o => {
+    const c = counts[o.value] ?? 0;
+    const sel = o.value === current ? ' selected' : '';
+    const zero = c === 0 ? ' zero' : '';
+    const safeValue = (o.value || '').replace(/'/g, "\\'");
+    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setOutboundReason('${safeValue}')">
       <span>${esc(o.label)}</span>
       <span class="chip-count${zero}">${c}</span>
     </div>`;
@@ -1096,7 +1231,14 @@ function sortedFilteredOutbound() {
   else if (outboundFilter.revenue === 'overdue') rows = rows.filter(r => r.will_miss_due_date);
   else if (outboundFilter.revenue === 'nolink')  rows = rows.filter(r => !(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url)));
   else if (outboundFilter.revenue === 'haslink') rows = rows.filter(r =>  (r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url)));
-  if (outboundFilter.partner) rows = rows.filter(r => (r.strategic_partner || '') === outboundFilter.partner);
+  if (outboundFilter.partner === IMPLANTS_FILTER_VALUE) {
+    rows = rows.filter(r => (r.sender_mailbox || '') === IMPLANTS_MAILBOX);
+  } else if (outboundFilter.partner === NEW_OFFICE_FILTER_VALUE) {
+    rows = rows.filter(isNewOrUnclassified);
+  } else if (outboundFilter.partner) {
+    rows = rows.filter(r => (r.strategic_partner || '') === outboundFilter.partner);
+  }
+  if (outboundFilter.reason) rows = rows.filter(r => r.reason === outboundFilter.reason);
   // Apply global text search
   if (outboundFilter.search) {
     const q = outboundFilter.search;
@@ -1140,6 +1282,7 @@ function renderOutbound() {
     return;
   }
   populatePartnerDropdown();
+  populateReasonDropdown();
   // Refresh the custom Filter dropdown — button label + bubble counts on each option
   const all = state.outbound || [];
   const hasLink = (r) => !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
@@ -1179,7 +1322,7 @@ function renderOutbound() {
   }
   const filtered = sortedFilteredOutbound();
   if (countEl) {
-    const filterActive = outboundFilter.revenue !== '' || outboundFilter.partner !== '';
+    const filterActive = outboundFilter.revenue !== '' || outboundFilter.partner !== '' || outboundFilter.reason !== '';
     countEl.textContent = filterActive
       ? `Showing ${filtered.length} of ${state.outbound.length}`
       : `${state.outbound.length} total`;
@@ -1195,6 +1338,118 @@ function renderOutbound() {
 // Renders one draft card. Shared by Pending Outbound and Pending Approval — the
 // triage chip + Approve/Edit/Reject actions are identical; only which list each
 // card lands in differs (by triage_bucket).
+function fmtBytes(n) {
+  n = Number(n || 0);
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+// Drop zone + uploaded-file chips at the bottom of an outbound/approval email card.
+function renderAttachZone(attemptId) {
+  if (!attemptId) return '';
+  const files = attachmentsByAttempt[attemptId] || [];
+  const uploading = !!uploadingByAttempt[attemptId];
+  const chips = files.map(f => `
+    <span class="attach-file-chip" title="${esc(f.filename)}">
+      <span class="attach-file-name">📄 ${esc(f.filename)}</span>
+      ${f.size_bytes ? `<span class="attach-size">${esc(fmtBytes(f.size_bytes))}</span>` : ''}
+      <button class="attach-remove" title="Remove attachment" onclick="event.stopPropagation(); removeAttachment('${f.id}','${attemptId}')">×</button>
+    </span>`).join('');
+  return `
+    <div class="attach-section" onclick="event.stopPropagation();">
+      ${files.length ? `<div class="attach-files">${chips}</div>` : ''}
+      <label class="attach-dropzone${uploading ? ' uploading' : ''}"
+             ondragover="event.preventDefault(); this.classList.add('dragover');"
+             ondragleave="this.classList.remove('dragover');"
+             ondrop="this.classList.remove('dragover'); handleAttachDrop(event, '${attemptId}');">
+        <input type="file" accept="application/pdf" multiple style="display:none;"
+               onchange="handleAttachSelect(this, '${attemptId}');" />
+        <span class="attach-dz-text">${uploading ? 'Uploading…' : '📎 Drag PDFs here, or click to attach'}</span>
+      </label>
+    </div>`;
+}
+
+// Re-render the two outbound lists in place, preserving expanded/edit/scroll context.
+function rerenderOutboundLists() {
+  const ctx = captureUiContext();
+  renderOutbound();
+  renderApproval();
+  requestAnimationFrame(() => restoreUiContext(ctx));
+}
+
+async function handleAttachDrop(ev, attemptId) {
+  ev.preventDefault();
+  const files = ev.dataTransfer && ev.dataTransfer.files ? Array.from(ev.dataTransfer.files) : [];
+  await uploadAttachments(files, attemptId);
+}
+async function handleAttachSelect(input, attemptId) {
+  const files = input.files ? Array.from(input.files) : [];
+  await uploadAttachments(files, attemptId);
+  input.value = '';
+}
+
+async function uploadAttachments(files, attemptId) {
+  const pdfs = files.filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  if (pdfs.length < files.length) toast('Only PDF files can be attached', 'err');
+  if (!pdfs.length) return;
+  uploadingByAttempt[attemptId] = true;
+  rerenderOutboundLists();
+  try {
+    for (const file of pdfs) await uploadOneAttachment(file, attemptId);
+    toast(pdfs.length === 1 ? 'Attachment added' : `${pdfs.length} attachments added`, 'ok');
+  } catch (e) {
+    toast('Attach failed: ' + (e.message || e), 'err');
+  } finally {
+    delete uploadingByAttempt[attemptId];
+    rerenderOutboundLists();
+  }
+}
+
+async function uploadOneAttachment(file, attemptId) {
+  const cfg = getConfig();
+  const base = cfg.url.replace(/\/+$/, '');
+  // 1. Mint a service-role signed upload URL (also records the attachment row).
+  const res = await fetch(base + '/functions/v1/outreach-attachment', {
+    method: 'POST',
+    headers: { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'sign', attempt_id: attemptId, filename: file.name, contentType: 'application/pdf', size: file.size, uploaded_by: (loginIdentity().email || loginIdentity().name) }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || ('sign ' + res.status));
+  // 2. Upload bytes straight to storage via a plain PUT to the signed URL. (We use fetch
+  // directly rather than supabase-js uploadToSignedUrl, which could hang and leave the card
+  // stuck on "Uploading…".) out.signedUrl already carries the upload token.
+  const putRes = await fetch(out.signedUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'false' },
+    body: file,
+  });
+  if (!putRes.ok) {
+    // Best-effort cleanup of the orphaned row if the byte upload failed.
+    fetch(base + '/functions/v1/outreach-attachment', { method: 'POST', headers: { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', attachment_id: out.attachment_id }) }).catch(() => {});
+    throw new Error('upload ' + putRes.status + ': ' + (await putRes.text().catch(() => '')));
+  }
+  (attachmentsByAttempt[attemptId] ||= []).push({ id: out.attachment_id, attempt_id: attemptId, filename: file.name, size_bytes: file.size, storage_path: out.path, storage_bucket: out.bucket });
+}
+
+async function removeAttachment(attachmentId, attemptId) {
+  if (!confirm('Remove this attachment?')) return;
+  const cfg = getConfig();
+  try {
+    const res = await fetch(cfg.url.replace(/\/+$/, '') + '/functions/v1/outreach-attachment', {
+      method: 'POST',
+      headers: { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', attachment_id: attachmentId }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || ('delete ' + res.status));
+    attachmentsByAttempt[attemptId] = (attachmentsByAttempt[attemptId] || []).filter(f => f.id !== attachmentId);
+    rerenderOutboundLists();
+    toast('Attachment removed', 'ok');
+  } catch (e) { toast('Remove failed: ' + (e.message || e), 'err'); }
+}
+
 function renderOutboundCard(r) {
     const reasonChip = '<span class="reason-chip ' + r.reason + '">' + (REASON_LABEL[r.reason] || r.reason) + '</span>';
     // Revenue chip: high $5k+, mid $2k-$5k, neutral under $2k. Hide if $0.
@@ -1224,9 +1479,15 @@ function renderOutboundCard(r) {
     const missChip = r.will_miss_due_date
       ? '<span class="activity-chip miss">⚠ Will miss due date · ' + r.days_late_if_approved_now + 'd late</span>'
       : '';
+    // Case-less scan-submission acknowledgments have no case and never carry an
+    // exocad link — they reply to the doctor who emailed in a scan. Bypass the
+    // exocad link gate for them so they can be approved like any other draft.
+    const isScanAck = r.reason === 'scan_submission_ack';
+    const uploading = !!uploadingByAttempt[r.attempt_id];
     // Exocad link presence — gate sends if missing
     const hasExocadLink = !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
-    const noLinkChip = hasExocadLink
+    const linkOk = hasExocadLink || isScanAck;
+    const noLinkChip = linkOk
       ? ''
       : '<span class="activity-chip nolink">⚠ No exocad link yet</span>';
     // Triage chip — shown on Pending Approval cards. "not sure" = contact since the
@@ -1264,8 +1525,8 @@ function renderOutboundCard(r) {
       <div class="item-head" onclick="toggleItem('${r.attempt_id}')">
         <div>
           <span class="case-id-block">
-            <span class="pan">${esc(r.pan_number || '-')}</span>
-            <span class="case-sub">Case ${esc(r.case_number)}</span>
+            <span class="pan">${esc(isScanAck ? '📩' : (r.pan_number || '-'))}</span>
+            <span class="case-sub">${isScanAck ? 'New scan submission' : 'Case ' + esc(r.case_number)}</span>
           </span>
           ${revenueChip}
           ${partnerChip}
@@ -1288,6 +1549,8 @@ function renderOutboundCard(r) {
           <div class="preview">
             <div class="preview-subject">${esc(r.subject)}</div>
             ${buildOutboundBody(r.body_html, r.exocad_viewer_url)}
+            ${isScanAck ? `<div class="attach-row" title="This PDF is attached automatically by the sender when you Approve &amp; Send — it is not stored on the draft, so it only appears on the email that goes out."><span class="attach-clip">📎</span> Onix Fixed ordering in AspenLabs.pdf <span class="attach-note">(attached on send)</span></div>` : ''}
+            ${renderAttachZone(r.attempt_id)}
           </div>
           ${hasSide ? `
             <div class="outbound-side">
@@ -1309,7 +1572,7 @@ function renderOutboundCard(r) {
             </div>
           ` : ''}
         </div>
-        ${hasExocadLink ? '' : `
+        ${linkOk ? '' : `
           <div class="link-gate">
             <div class="link-gate-title">⚠ This draft can't be sent yet — no exocad viewer link on file for case ${esc(r.case_number)}.</div>
             <div class="link-gate-sub">The link sync agent didn't find a webview URL in this case's folder. Paste one below to unblock the send, or wait for the next sync if the design team is still uploading.</div>
@@ -1321,10 +1584,10 @@ function renderOutboundCard(r) {
         `}
         <div class="actions">
           ${hasExocadLink ? `<button class="act view-exocad" onclick="window.open('${esc(r.exocad_viewer_url)}', '_blank', 'noopener')">View in Exocad</button>` : ''}
-          <button class="act approve" onclick="approve('${r.attempt_id}')" ${hasExocadLink ? '' : 'disabled title="Add the exocad viewer link first"'}>Approve &amp; Send</button>
-          <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${hasExocadLink ? '' : 'disabled title="Add the exocad viewer link first"'}>Edit Then Send</button>
+          <button class="act approve" onclick="approve('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : '')}>Approve &amp; Send</button>
+          <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : '')}>Edit Then Send</button>
           <button class="act reject" onclick="reject('${r.attempt_id}')">Reject</button>
-          <button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>
+          ${isScanAck ? '' : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
         </div>
         <div class="edit-form" id="edit-${r.attempt_id}">
           <label>Subject</label>
@@ -1971,13 +2234,51 @@ function toggleItem(id) {
 function showEdit(id) { document.getElementById('edit-' + id).classList.add('shown'); }
 function hideEdit(id) { document.getElementById('edit-' + id).classList.remove('shown'); }
 
+// Confirm before a send. If no PDF is attached, warn (but let the coordinator proceed).
+function confirmSend(id, withAttachMsg) {
+  const hasAttach = (attachmentsByAttempt[id] || []).length > 0;
+  if (!hasAttach) {
+    return confirm('No PDF is attached to this email.\n\nSend it without an attachment?\n(Click Cancel if you want to attach a PDF first.)');
+  }
+  return confirm(withAttachMsg);
+}
+
 async function approve(id) {
-  if (!confirm('Approve and queue this email for sending?')) return;
+  if (!confirmSend(id, 'Approve and send this email now?')) return;
   try {
     await callRpc('approve_attempt', { p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name), p_note: null });
-    toast('Approved ·will send on next tick', 'ok');
+    // Send this one draft immediately (in seconds) instead of waiting for the 5-min
+    // cron. If the call fails, the draft stays 'queued' and the cron sends it next tick.
+    toast('Approved ·sending now…', 'ok');
+    try {
+      const r = await sendAttemptNow(id);
+      if (r && r.error) throw new Error(r.error);
+      toast('Sent', 'ok');
+    } catch (e) {
+      console.error('Immediate-send failed:', e);
+      toast('Approved ·will send on next tick', 'ok');
+    }
     await loadAll();
   } catch (e) {}
+}
+
+// Send a single approved attempt right away via the send-attempt edge function. That
+// function only sends an attempt already in 'queued' state (i.e. approved), claiming it
+// atomically, so this can never send an unapproved draft or double-send.
+async function sendAttemptNow(attemptId) {
+  const cfg = getConfig();
+  const res = await fetch(cfg.url.replace(/\/+$/, '') + '/functions/v1/send-attempt', {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: 'Bearer ' + cfg.key,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ attempt_id: attemptId }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || ('send-attempt ' + res.status));
+  return out;
 }
 
 // Manually attach an exocad viewer link to a case. Used when the sync agent
@@ -2032,6 +2333,8 @@ async function reject(id) {
   } catch (e) {}
 }
 async function saveEdit(id) {
+  if (!(attachmentsByAttempt[id] || []).length &&
+      !confirm('No PDF is attached to this email.\n\nSend it without an attachment?\n(Click Cancel if you want to attach a PDF first.)')) return;
   const subject = document.getElementById('subject-' + id).value;
   // contenteditable div ·innerHTML preserves bullets, bold, links, etc.
   const body    = document.getElementById('body-' + id).innerHTML;
@@ -2349,6 +2652,8 @@ document.addEventListener('click', (e) => {
   if (filterDd && !filterDd.contains(e.target)) filterDd.classList.remove('open');
   const partnerDd = document.getElementById('outbound-partner-dd');
   if (partnerDd && !partnerDd.contains(e.target)) partnerDd.classList.remove('open');
+  const reasonDd = document.getElementById('outbound-reason-dd');
+  if (reasonDd && !reasonDd.contains(e.target)) reasonDd.classList.remove('open');
   const inboundStatusDd = document.getElementById('inbound-status-dd');
   if (inboundStatusDd && !inboundStatusDd.contains(e.target)) inboundStatusDd.classList.remove('open');
   const inboundCaseDd = document.getElementById('inbound-case-dd');
@@ -4857,6 +5162,9 @@ Object.assign(window, {
   setOutboundSort,
   toggleFilterDd, setOutboundRevenue, closeFilterDd,
   togglePartnerDd, setOutboundPartner, closePartnerDd,
+  toggleReasonDd, setOutboundReason, closeReasonDd,
+  // Email attachments (drop zone on outbound/approval cards)
+  handleAttachDrop, handleAttachSelect, removeAttachment,
   // Inbound filters
   toggleInboundStatusDd, closeInboundStatusDd, toggleInboundCaseDd, closeInboundCaseDd,
   setInboundFilter, clearInboundSearch, toggleInboundTimeSensitive,
