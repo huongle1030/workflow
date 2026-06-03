@@ -422,6 +422,7 @@
   .reason-chip.waiting_on_parts { background: var(--slate-light); color: var(--slate); }
   .reason-chip.design_modification { background: var(--pale); color: var(--navy); }
   .reason-chip.reschedule_check { background: #FCE7F3; color: #9D174D; }
+  .reason-chip.scan_submission_ack { background: #FEE2E2; color: #B91C1C; }
 
   .conf-bar {
     height: 5px; width: 80px; background: var(--slate-light);
@@ -548,6 +549,41 @@
   }
   .preview p { margin: 0 0 8px; }
   .preview a { color: var(--blue); }
+  /* Attachment bar for scan-submission acks. The job-aid PDF is attached by the
+     sender at send time (not stored on the draft), so this is a preview-only hint. */
+  .attach-row {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 12px; padding: 7px 12px;
+    background: var(--cream, #f5f1e6); border: 1px solid var(--slate-light);
+    border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--navy);
+  }
+  .attach-row .attach-clip { font-weight: 400; }
+  .attach-row .attach-note { font-weight: 400; font-style: italic; color: var(--slate); }
+  /* Coordinator PDF attachment drop zone + uploaded-file chips (outbound/approval cards). */
+  .attach-section { margin-top: 12px; }
+  .attach-files { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .attach-file-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 5px 8px 5px 10px; border-radius: 8px;
+    background: var(--pale, #eef4f8); border: 1px solid var(--slate-light);
+    font-size: 12.5px; font-weight: 600; color: var(--navy); max-width: 320px;
+  }
+  .attach-file-chip .attach-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attach-file-chip .attach-size { font-weight: 400; color: var(--slate); }
+  .attach-file-chip .attach-remove {
+    border: none; background: transparent; cursor: pointer;
+    color: var(--slate); font-size: 16px; line-height: 1; padding: 0 2px; border-radius: 4px;
+  }
+  .attach-file-chip .attach-remove:hover { color: #B91C1C; background: rgba(185,28,28,0.08); }
+  .attach-dropzone {
+    display: flex; align-items: center; justify-content: center;
+    padding: 12px; border: 1.5px dashed var(--slate-light); border-radius: 10px;
+    background: var(--bg, #fafbfc); color: var(--slate); font-size: 12.5px; font-weight: 600;
+    cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .attach-dropzone:hover { border-color: var(--blue-soft, #9cc6e0); color: var(--navy); }
+  .attach-dropzone.dragover { border-color: var(--blue, #1882c7); background: #eef6fc; color: var(--navy); }
+  .attach-dropzone.uploading { opacity: 0.7; cursor: progress; }
   /* Normalize email-body bullet lists. Email templates often nest <ul>s, which
      the browser renders with hollow circles (level 2) / squares (level 3),
      giving the inconsistent look seen on some cards. Force a filled disc at
@@ -1202,6 +1238,11 @@
   .toolbar-left {
     display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   }
+  /* Right-aligned cluster: the Type (reason) filter + the showing/total count. */
+  .toolbar-right {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-left: auto;
+  }
   .toolbar-label {
     font-size: 10px; font-weight: 600;
     letter-spacing: 1.5px; text-transform: uppercase;
@@ -1297,6 +1338,9 @@
     z-index: 100;
   }
   .custom-dd.open .custom-dd-menu { display: block; }
+  /* The Type (reason) filter sits at the far right, so the default 260px menu runs off
+     the edge. Its labels are short — narrow this menu only, keeping its left edge anchored. */
+  #outbound-reason-dd .custom-dd-menu { min-width: 0; width: 200px; }
   .custom-dd-option {
     display: flex; justify-content: space-between; align-items: center;
     padding: 8px 12px;
@@ -2980,6 +3024,7 @@
   .reason-chip.waiting_on_parts { background: #F1F5F9; color: #334155; border-color: #CBD5E1; }
   .reason-chip.design_modification { background: #DBEAFE; color: #1E3A8A; border-color: #BFDBFE; }
   .reason-chip.reschedule_check { background: #FCE7F3; color: #9D174D; border-color: #FBCFE8; }
+  .reason-chip.scan_submission_ack { background: #FEE2E2; color: #B91C1C; border-color: #FECACA; }
 
   /* Activity chips */
   .activity-chip.reply  { background: #FEE4E4; color: #B91C1C; border-color: #FBC7C7; }
@@ -3348,7 +3393,17 @@
         <div class="custom-dd-menu" id="outbound-filter-menu" role="listbox"></div>
       </div>
     </div>
-    <div class="outbound-count" id="outbound-count"></div>
+    <div class="toolbar-right">
+      <label class="toolbar-label">Type</label>
+      <div class="custom-dd" id="outbound-reason-dd">
+        <button type="button" class="custom-dd-btn" onclick="toggleReasonDd(event)" aria-haspopup="listbox">
+          <span class="custom-dd-label" id="outbound-reason-label">All types</span>
+          <span class="chip-count" id="outbound-reason-count">–</span>
+        </button>
+        <div class="custom-dd-menu" id="outbound-reason-menu" role="listbox"></div>
+      </div>
+      <div class="outbound-count" id="outbound-count"></div>
+    </div>
   </div>
   <div id="list-outbound"><div class="loading">Loading…</div></div>
 </div>
