@@ -4,6 +4,10 @@
 import './auth.css';
 import { initAuth, getCurrentEmployee, signOut as authSignOut, getAccessToken } from './auth.js';
 import { can, CAPABILITIES, getCurrentRole, ROLE_LABELS, ROLES } from './permissions.js';
+// CaseFlow production modes (Data Entry / Case Review / Scanning / Design Team).
+// Importing for side effects: sets window.CF and bundles the caseflow module + CSS.
+import { initCaseFlow } from './caseflow/app.js';
+initCaseFlow();
 
 // Coordinator-uploaded PDF attachments, keyed by attempt_id. Populated in loadOutbound()
 // (bulk read of dr_outreach_attempt_attachments) and rendered as chips + a drop zone on
@@ -2680,48 +2684,62 @@ let currentMode = localStorage.getItem('skdla_mode') || 'outreach';
 
 const OUTREACH_PANELS = ['outbound','approval','ready','inbound','audit','lookup','submit','reschedule','editlog','feedback'];
 const CC_PANELS       = ['cc-dashboard','cc-newlog','cc-history','cc-tracker','cc-coordinators','cc-prefs'];
+// CaseFlow production modes — each is a single panel (id `panel-<mode>`) rendered
+// by src/caseflow/app.js. See PRD_caseflow_4_modes.md.
+const CASEFLOW_PANELS = ['dataentry','casereview','scanning','design'];
+const CASEFLOW_MODES = {
+  dataentry:  { tabs: 'tabs-dataentry',  name: 'Data Entry',  sub: 'Enter case info + AOX checklist, route to review' },
+  casereview: { tabs: 'tabs-casereview', name: 'Case Review', sub: 'AOX review checklist + route to design/scanning' },
+  scanning:   { tabs: 'tabs-scanning',   name: 'Scanning',    sub: 'Upload scan files, pass to the design team' },
+  design:     { tabs: 'tabs-design',     name: 'Design Team', sub: 'Design checklist, QC, outsourcing, ZIP export' },
+};
+const ALL_MODE_TABROWS = ['tabs-outreach','tabs-cc','tabs-dataentry','tabs-casereview','tabs-scanning','tabs-design'];
+const ALL_MODE_CHECKS  = ['check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design'];
 
 function switchMode(mode) {
   currentMode = mode;
   localStorage.setItem('skdla_mode', mode);
+  const cf = CASEFLOW_MODES[mode];
 
-  document.getElementById('tabs-outreach').classList.toggle('hidden', mode !== 'outreach');
-  document.getElementById('tabs-cc').classList.toggle('hidden', mode !== 'cc');
-  // The sub-nav rows belong to the outreach app; hide them outside outreach mode
-  // (activateOutreachTab refines visibility within outreach based on the active tab).
+  // Show only the active mode's tab row.
+  const activeTabRow = mode === 'outreach' ? 'tabs-outreach' : mode === 'cc' ? 'tabs-cc' : (cf ? cf.tabs : null);
+  ALL_MODE_TABROWS.forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', id !== activeTabRow); });
+  // The sub-nav rows belong to the outreach app; hide them outside outreach mode.
   if (mode !== 'outreach') {
     document.getElementById('subtabs-pending')?.classList.add('hidden');
     document.getElementById('subtabs-actions')?.classList.add('hidden');
   }
 
-  // Hide all panels then show the default for the current mode
-  [...OUTREACH_PANELS, ...CC_PANELS].forEach(p =>
-    document.getElementById('panel-' + p).classList.add('hidden'));
-
+  // Hide all panels (outreach + cc + caseflow) then show the default for this mode.
+  [...OUTREACH_PANELS, ...CC_PANELS, ...CASEFLOW_PANELS].forEach(p =>
+    document.getElementById('panel-' + p)?.classList.add('hidden'));
   document.querySelectorAll('#tabs-outreach .tab, #tabs-cc .tab').forEach(t => t.classList.remove('active'));
+
+  // Brand-switcher checkmark: show only the active mode's.
+  ALL_MODE_CHECKS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  const chk = document.getElementById('check-' + mode); if (chk) chk.style.display = 'inline';
 
   if (mode === 'outreach') {
     // Land on the first tab this role can see; activateOutreachTab handles the
     // Pending parent + sub-nav. (e.g. case_entry lands on Submit.)
     activateOutreachTab(firstPermittedOutreachTab());
     document.querySelector('.brand-text .sub').textContent = 'Spectrum Killian · Coordinator Inbox';
-    document.getElementById('check-outreach').style.display = 'inline';
-    document.getElementById('check-cc').style.display = 'none';
     document.querySelector('.brand-text .name').textContent = 'Design Approvals';
-  } else {
+  } else if (mode === 'cc') {
     document.getElementById('panel-cc-dashboard').classList.remove('hidden');
     document.querySelector('#tabs-cc .tab[data-cc-tab="dashboard"]').classList.add('active');
     document.querySelector('.brand-text .sub').textContent = 'Case Coordination · Workflow + Logs';
-    document.getElementById('check-outreach').style.display = 'none';
-    document.getElementById('check-cc').style.display = 'inline';
     document.querySelector('.brand-text .name').textContent = 'Case Coordination';
     ensureCcDataLoaded();
+  } else if (cf) {
+    document.getElementById('panel-' + mode).classList.remove('hidden');
+    document.querySelector('.brand-text .name').textContent = cf.name;
+    document.querySelector('.brand-text .sub').textContent = cf.sub;
+    if (window.CF && window.CF.renderCaseFlowMode) window.CF.renderCaseFlowMode(mode);
   }
-  // The KPI strip + search bar are scoped to the outreach app
+  // The KPI strip + search bar are scoped to the outreach app.
   const kpiStrip = document.getElementById('kpi-strip');
   const searchRow = document.getElementById('global-search-row');
-  // KPI strip is also gated by the `metrics` capability (hidden for
-  // design_approver / case_entry even within the outreach app).
   if (kpiStrip)  kpiStrip.style.display  = (mode === 'outreach' && can(CAPABILITIES.METRICS)) ? '' : 'none';
   if (searchRow) searchRow.style.display = (mode === 'outreach') ? '' : 'none';
   if (mode === 'outreach' && typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
@@ -4740,9 +4758,9 @@ function boot() {
   // Show the hidden-sender count chip immediately, even before data loads
   if (typeof renderHiddenSendersList === 'function') renderHiddenSendersList();
 
-  // Restore the last-used mode (outreach or case coordination)
-  if (currentMode === 'cc') switchMode('cc');
-  else switchMode('outreach');
+  // Restore the last-used mode (outreach, case coordination, or a CaseFlow mode)
+  const VALID_MODES = ['outreach', 'cc', 'dataentry', 'casereview', 'scanning', 'design'];
+  switchMode(VALID_MODES.includes(currentMode) ? currentMode : 'outreach');
 
   // Hide tabs/controls this role isn't allowed to see, and land on a permitted
   // tab. Runs after switchMode so it can correct the active tab if needed.

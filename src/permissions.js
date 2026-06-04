@@ -51,6 +51,12 @@ export const CAPABILITIES = {
   OUTBOUND_REVENUE: 'outbound.revenue',// Revenue chip/sort/filter in Outbound
   VIEW_CASE_SUGGESTION: 'inbound.case_suggestion', // AI case-# chip/buttons on unmatched Pending Replies (admin + executive)
   HIDE_SENDER:          'inbound.hide_sender',     // Add/remove hidden senders (admin + executive + manager). Viewing the list is NOT gated.
+  // CaseFlow production modes (Data Entry / Case Review / Scanning / Design Team).
+  // Visual gating only for v1 — default-granted to every approved role (see below).
+  CASEFLOW_ENTRY:   'caseflow.entry',
+  CASEFLOW_REVIEW:  'caseflow.review',
+  CASEFLOW_SCAN:    'caseflow.scan',
+  CASEFLOW_DESIGN:  'caseflow.design',
 };
 
 const C = CAPABILITIES;
@@ -67,6 +73,9 @@ const RESTRICTED_CAPS = [
 
 // Capabilities granted to the two non-privileged limited roles.
 // account_manager / manager / executive / admin get everything (see below).
+// CaseFlow modes are default-granted to every approved role for v1 (PRD §6).
+const CASEFLOW_CAPS = [C.CASEFLOW_ENTRY, C.CASEFLOW_REVIEW, C.CASEFLOW_SCAN, C.CASEFLOW_DESIGN];
+
 const DESIGN_APPROVER_CAPS = [
   C.TAB_SUBMIT,
   C.TAB_OUTBOUND,   // can open Pending Outbound...
@@ -74,6 +83,7 @@ const DESIGN_APPROVER_CAPS = [
   C.TAB_READY,
   C.TAB_RESCHEDULE,
   C.TAB_LOOKUP,
+  ...CASEFLOW_CAPS,
   // ...but NOT outbound.revenue, audit, editlog, or metrics.
 ];
 
@@ -82,6 +92,7 @@ const CASE_ENTRY_CAPS = [
   C.TAB_READY,
   C.TAB_RESCHEDULE,
   C.TAB_LOOKUP,
+  ...CASEFLOW_CAPS,
   // No outbound, inbound, audit, editlog, metrics.
 ];
 
