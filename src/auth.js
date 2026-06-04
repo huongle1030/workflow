@@ -23,6 +23,12 @@ export const ROLE_OPTIONS = [
   { value: 'account_manager',  label: 'Account Manager' },
   { value: 'technical_advisor', label: 'Technical Advisor' },
   { value: 'manager',          label: 'Manager' },
+  // CaseFlow production-only roles (no outreach / case coordination).
+  { value: 'data_entry',       label: 'Data Entry' },
+  { value: 'case_review',      label: 'Case Review' },
+  { value: 'designer',         label: 'Designer' },
+  { value: 'scanning',         label: 'Scanning' },
+  { value: 'edward_ta',        label: 'CaseFlow Tech Advisor' },
 ];
 
 let currentUser = null;
