@@ -318,7 +318,7 @@ async function uploadLargeAttachment(token: string, mailbox: string, messageId: 
   }
 }
 
-async function graphSendMail(to: string, subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null) {
+async function graphSendMail(to: string, subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null, cc?: string[] | null) {
   const token = await graphToken();
   const fromMailbox = sender && sender.length > 3 ? sender : MS_SENDER_USER_ID;
   const tag = `[SKDLA-${caseNumber}]`;
@@ -329,6 +329,7 @@ async function graphSendMail(to: string, subject: string, html: string, caseNumb
     toRecipients: [{ emailAddress: { address: to } }],
     singleValueExtendedProperties: [{ id: "String {66f5a359-4659-4830-9070-00047ec6ac6e} Name SKDLACaseNumber", value: caseNumber }],
   };
+  if (cc && cc.length) messageBody.ccRecipients = cc.map((a) => ({ emailAddress: { address: a } }));
   if (attachments && attachments.length) messageBody.attachments = attachments;
   const draftRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/messages`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(messageBody) });
   if (!draftRes.ok) throw new Error(`Graph draft failed (mailbox=${fromMailbox}): ${draftRes.status} ${await draftRes.text()}`);
@@ -354,7 +355,7 @@ function fmtDate(d: string | null | undefined): string {
 serve(async (_req) => {
   const log: any = { started_at: new Date().toISOString(), enqueued: 0, sent: 0, gated: 0, errors: [] };
   try {
-    const { data: approvedAttempts } = await sb.from("dr_outreach_attempts").select("id, queue_id, to_email, subject, body_html, sender_mailbox").eq("status", "queued").limit(50);
+    const { data: approvedAttempts } = await sb.from("dr_outreach_attempts").select("id, queue_id, to_email, subject, body_html, sender_mailbox, cc_emails").eq("status", "queued").limit(50);
     for (const a of approvedAttempts ?? []) {
       try {
         const { data: q } = await sb.from("dr_outreach_queue").select("case_number, reason").eq("id", a.queue_id).single();
@@ -370,7 +371,7 @@ serve(async (_req) => {
         }
         // Merge in coordinator-uploaded attachments (inline if small, upload session if large).
         const { inline, large } = await buildAttachmentSets(autoAttachments, a.id);
-        const send = await graphSendMail(a.to_email, a.subject, a.body_html, q?.case_number ?? "approved", a.sender_mailbox, inline, large);
+        const send = await graphSendMail(a.to_email, a.subject, a.body_html, q?.case_number ?? "approved", a.sender_mailbox, inline, large, a.cc_emails);
         await sb.from("dr_outreach_attempts").update({ status: "sent", graph_message_id: send.graph_message_id, graph_conversation_id: send.graph_conversation_id, sent_at: new Date().toISOString() }).eq("id", a.id);
         await sb.rpc("record_outbox_outbound", { p_case_number: q?.case_number, p_account_no: null, p_attempt_id: a.id, p_to_addr: a.to_email, p_subject: a.subject, p_body_html: a.body_html, p_graph_msg_id: send.graph_message_id });
         log.sent += 1;

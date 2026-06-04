@@ -549,6 +549,28 @@
   .note-banner .text {
     white-space: pre-wrap; line-height: 1.5;
   }
+  /* "CC'd to" sub-card — same yellow family as Account Preferences. Used inside the Most
+     Recent Communication card (outbound/approval) and on inbound reply cards. */
+  .cc-banner {
+    background: #FBF3DC; border: 1px solid #F0DFA8;
+    color: #75540D; padding: 9px 12px; border-radius: 6px;
+    font-size: 12.5px; margin-top: 10px;
+  }
+  .cc-banner .label {
+    font-size: 10px; font-weight: 800;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    color: #8E6510; margin-bottom: 6px;
+  }
+  .cc-banner .cc-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cc-banner .cc-chip {
+    display: inline-block; padding: 3px 8px; border-radius: 999px;
+    background: #FDF8E9; border: 1px solid #F0DFA8;
+    font-weight: 600; color: #75540D;
+  }
+  .cc-banner .cc-empty { font-style: italic; color: #8E6510; opacity: 0.75; }
+  /* Variant nested inside the Most Recent Communication card: a touch narrower than the
+     parent box, kept short. */
+  .cc-banner.in-note { width: 92%; box-sizing: border-box; }
   @media (max-width: 900px) {
     .outbound-detail-row { grid-template-columns: 1fr; }
   }
@@ -594,6 +616,25 @@
   .attach-dropzone:hover { border-color: var(--blue-soft, #9cc6e0); color: var(--navy); }
   .attach-dropzone.dragover { border-color: var(--blue, #1882c7); background: #eef6fc; color: var(--navy); }
   .attach-dropzone.uploading { opacity: 0.7; cursor: progress; }
+  /* RX-required state: no PDF attached yet on a real case draft (send is gated).
+     Clear box, dark-gray text, medium-gray dashed outline. */
+  .attach-dropzone.required {
+    border-color: #B5B5B5; border-style: dashed; background: transparent; color: #4A4A4A;
+  }
+  .attach-dropzone.required:hover { border-color: #9A9A9A; color: #4A4A4A; }
+  /* Coordinator-typed CC field on outbound/approval cards. */
+  .cc-field { margin-top: 12px; }
+  .cc-field label {
+    display: block; font-size: 10px; font-weight: 800;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--slate); margin-bottom: 5px;
+  }
+  .cc-field input {
+    width: 100%; box-sizing: border-box; padding: 8px 10px;
+    border: 1px solid var(--slate-light); border-radius: 8px;
+    font-size: 13px; color: var(--navy);
+  }
+  .cc-field .cc-hint { font-size: 11px; color: var(--slate); margin-top: 4px; }
   /* Normalize email-body bullet lists. Email templates often nest <ul>s, which
      the browser renders with hollow circles (level 2) / squares (level 3),
      giving the inconsistent look seen on some cards. Force a filled disc at
