@@ -76,6 +76,30 @@ export async function fillDesignPdf(c) {
   } catch (e) { return null; }
 }
 
+// Generic folder-ZIP builder. `entries` is an array of:
+//   { name: 'folder/file.ext', text: '...' }      — a text file (UTF-8)
+//   { name: 'folder/file.ext', url: '<signed>' }   — bytes fetched from a URL
+// Folder structure comes from '/' in the entry names. Files that fail to fetch
+// are replaced by a small .UNAVAILABLE.txt note so the export never silently drops.
+export async function buildAndDownloadZip(zipName, entries, toast) {
+  const enc = new TextEncoder();
+  const files = [];
+  for (const e of entries) {
+    if (!e) continue;
+    if (e.text != null) { files.push({ name: e.name, bytes: enc.encode(e.text) }); continue; }
+    if (e.bytes) { files.push({ name: e.name, bytes: e.bytes }); continue; }
+    if (e.url) {
+      try { const resp = await fetch(e.url); if (!resp.ok) throw new Error('HTTP ' + resp.status); files.push({ name: e.name, bytes: new Uint8Array(await resp.arrayBuffer()) }); }
+      catch (err) { files.push({ name: e.name + '.UNAVAILABLE.txt', bytes: enc.encode('Could not retrieve file from storage: ' + (err && err.message)) }); }
+      continue;
+    }
+    files.push({ name: e.name + '.UNAVAILABLE.txt', bytes: enc.encode('File had no stored path.') });
+  }
+  const zip = makeZip(files);
+  try { const blob = new Blob([zip], { type: 'application/zip' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = zipName; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) {}
+  if (toast) toast('Exported ' + zipName);
+}
+
 // Build + download the case ZIP. `toast` is an optional (msg)=>void callback.
 export async function exportZip(c, toast) {
   if (!c) return;

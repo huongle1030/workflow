@@ -43,6 +43,9 @@
 .cf-root .btn-danger:hover { background:var(--color-background-danger) }
 
 /* cases table */
+.cf-root .cf-queue-search { position:relative;max-width:300px;margin-bottom:12px }
+.cf-root .cf-queue-search i { position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--color-text-tertiary);pointer-events:none }
+.cf-root .cf-queue-search input { padding-left:32px }
 .cf-root .cases-table { background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden }
 .cf-root .table-header { display:grid;grid-template-columns:110px 1fr 130px 150px 70px 100px 100px;gap:0;border-bottom:0.5px solid var(--color-border-tertiary);padding:0 16px }
 .cf-root .th { padding:10px 8px;font-size:11px;font-weight:500;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em }
