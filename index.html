@@ -6,6 +6,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Tabler icon webfont — used by the CaseFlow production modes (ti ti-* glyphs). -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.6.0/dist/tabler-icons.min.css">
 <style>
   :root {
     color-scheme: light;
@@ -3263,6 +3265,38 @@
         </div>
         <span id="check-cc" class="check" style="display:none;">✓</span>
       </div>
+      <div class="app-item" onclick="switchMode('dataentry'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark cc"></div>
+        <div class="app-info">
+          <span class="name">Data Entry</span>
+          <span class="desc">Enter case information + AOX checklist, route to review</span>
+        </div>
+        <span id="check-dataentry" class="check" style="display:none;">✓</span>
+      </div>
+      <div class="app-item" onclick="switchMode('casereview'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark cc"></div>
+        <div class="app-info">
+          <span class="name">Case Review</span>
+          <span class="desc">AOX review checklist + route to design or scanning</span>
+        </div>
+        <span id="check-casereview" class="check" style="display:none;">✓</span>
+      </div>
+      <div class="app-item" onclick="switchMode('scanning'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark cc"></div>
+        <div class="app-info">
+          <span class="name">Scanning</span>
+          <span class="desc">Upload scan files, pass to the design team</span>
+        </div>
+        <span id="check-scanning" class="check" style="display:none;">✓</span>
+      </div>
+      <div class="app-item" onclick="switchMode('design'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark cc"></div>
+        <div class="app-info">
+          <span class="name">Design Team</span>
+          <span class="desc">Design checklist, QC, outsourcing, ZIP export</span>
+        </div>
+        <span id="check-design" class="check" style="display:none;">✓</span>
+      </div>
     </div>
   </div>
   <div class="appbar-right">
@@ -3347,6 +3381,13 @@
   <div class="tab" data-cc-tab="coordinators">Coordinators</div>
   <div class="tab" data-cc-tab="prefs">Preferences</div>
 </div>
+
+<!-- CaseFlow production-mode tab rows. Each mode renders its queue/detail into
+     its single panel below; these rows are just the mode label (one active tab). -->
+<div class="tabs hidden" id="tabs-dataentry"><div class="tab active">Data Entry</div></div>
+<div class="tabs hidden" id="tabs-casereview"><div class="tab active">Case Review</div></div>
+<div class="tabs hidden" id="tabs-scanning"><div class="tab active">Scanning</div></div>
+<div class="tabs hidden" id="tabs-design"><div class="tab active">Design Team</div></div>
 
 <div class="global-search-row" id="global-search-row">
   <div class="global-search" id="global-search-wrap">
@@ -3903,6 +3944,38 @@ Clean margins are needed before we can proceed with the design"></textarea>
     <div id="cc-coord-list"></div>
   </div>
 </div>
+
+<!-- ================= CaseFlow production modes ================= -->
+<!-- Each mode's queue + case detail is rendered into these containers by
+     src/caseflow/app.js (renderCaseFlowMode). switchMode toggles `hidden`. -->
+<div class="hidden" id="panel-dataentry"></div>
+<div class="hidden" id="panel-casereview"></div>
+<div class="hidden" id="panel-scanning"></div>
+<div class="hidden" id="panel-design"></div>
+
+<!-- CaseFlow New Case modal (scoped under .cf-root styling) -->
+<div class="cf-modal-overlay" id="cf-new-case-modal" role="dialog" aria-modal="true">
+  <div class="cf-root"><div class="modal">
+    <div class="modal-title"><span>New Case</span><button class="close-btn" onclick="CF.closeModal()" aria-label="Close"><i class="ti ti-x"></i></button></div>
+    <span class="sec-label" style="margin-top:0">Patient &amp; Doctor</span>
+    <div class="form-group" style="margin-bottom:12px"><label>Patient name</label><input type="text" id="cf-nc-patient" placeholder="First &amp; Last name"></div>
+    <div class="form-group" style="margin-bottom:12px"><label>Doctor</label><input type="text" id="cf-nc-doctor" placeholder="Dr. First &amp; Last name"></div>
+    <div class="divider"></div>
+    <span class="sec-label" style="margin-top:0">Dates</span>
+    <div class="form-group" style="margin-bottom:12px"><label>Dr due date</label><input type="date" id="cf-nc-drdue"></div>
+    <div class="divider"></div>
+    <span class="sec-label" style="margin-top:0">Priority</span>
+    <div class="rush-row" id="cf-rush-row" onclick="CF.toggleRush()" style="margin-bottom:14px"><input type="checkbox" id="cf-nc-rush"><label class="rush-label" for="cf-nc-rush">Rush?</label><span class="rush-hint">Mark if this case needs expedited handling</span></div>
+    <div class="divider"></div>
+    <span class="sec-label" style="margin-top:0">Notes</span>
+    <div class="form-group" style="margin-bottom:16px"><textarea id="cf-nc-notes" placeholder="Any additional notes..."></textarea></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn" onclick="CF.closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="CF.createCase()"><i class="ti ti-plus"></i> Create Case</button>
+    </div>
+  </div></div>
+</div>
+<div class="cf-toast" id="cf-toast" role="status" aria-live="polite"><i class="ti ti-check"></i><span id="cf-toast-msg"></span></div>
 
 <!-- Metrics · By Doctor modal — opened from the appbar 📊 button. -->
 <!-- Admin Approvals modal — opens from the "Approvals" link (admins only). -->
