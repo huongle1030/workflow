@@ -21,6 +21,13 @@ export const ROLES = {
   MANAGER:           'manager',
   EXECUTIVE:         'executive',
   ADMIN:             'admin',
+  // CaseFlow production-only roles. These see ONLY their CaseFlow mode(s) — no
+  // Design Approvals (outreach) and no Case Coordination access.
+  DATA_ENTRY:        'data_entry',
+  CASE_REVIEW:       'case_review',
+  DESIGNER:          'designer',
+  SCANNING:          'scanning',
+  EDWARD_TA:         'edward_ta',
 };
 
 // Human-readable labels for every role (including admin-assigned ones).
@@ -32,6 +39,12 @@ export const ROLE_LABELS = {
   [ROLES.MANAGER]:           'Manager',
   [ROLES.EXECUTIVE]:         'Executive',
   [ROLES.ADMIN]:             'Admin',
+  [ROLES.DATA_ENTRY]:        'Data Entry',
+  [ROLES.CASE_REVIEW]:       'Case Review',
+  [ROLES.DESIGNER]:          'Designer',
+  [ROLES.SCANNING]:          'Scanning',
+  // edward_ta is admin-assigned (a named individual); shown as this label.
+  [ROLES.EDWARD_TA]:         'CaseFlow Tech Advisor',
 };
 
 // ---- Capability keys ----
@@ -51,8 +64,14 @@ export const CAPABILITIES = {
   OUTBOUND_REVENUE: 'outbound.revenue',// Revenue chip/sort/filter in Outbound
   VIEW_CASE_SUGGESTION: 'inbound.case_suggestion', // AI case-# chip/buttons on unmatched Pending Replies (admin + executive)
   HIDE_SENDER:          'inbound.hide_sender',     // Add/remove hidden senders (admin + executive + manager). Viewing the list is NOT gated.
+  // Mode (app-switcher) access. These gate WHOLE apps in the brand switcher:
+  //   MODE_OUTREACH -> the Design Approvals (outreach) app + all its tabs.
+  //   MODE_CC       -> the Case Coordination app (#tabs-cc).
+  // The four CaseFlow modes below are gated by their own caseflow.* caps.
+  MODE_OUTREACH:    'mode.outreach',
+  MODE_CC:          'mode.cc',
   // CaseFlow production modes (Data Entry / Case Review / Scanning / Design Team).
-  // Visual gating only for v1 — default-granted to every approved role (see below).
+  // Each mode is gated by its cap (mode-switcher item + switchMode guard).
   CASEFLOW_ENTRY:   'caseflow.entry',
   CASEFLOW_REVIEW:  'caseflow.review',
   CASEFLOW_SCAN:    'caseflow.scan',
@@ -71,12 +90,14 @@ const RESTRICTED_CAPS = [
   C.HIDE_SENDER,
 ];
 
-// Capabilities granted to the two non-privileged limited roles.
-// account_manager / manager / executive / admin get everything (see below).
-// CaseFlow modes are default-granted to every approved role for v1 (PRD §6).
+// All four CaseFlow mode caps. Granted in full to the outreach roles
+// (design_approver/case_entry) and to account_manager+ via ALL_CAPS; the
+// CaseFlow production-only roles below get a hand-picked subset instead.
 const CASEFLOW_CAPS = [C.CASEFLOW_ENTRY, C.CASEFLOW_REVIEW, C.CASEFLOW_SCAN, C.CASEFLOW_DESIGN];
 
 const DESIGN_APPROVER_CAPS = [
+  C.MODE_OUTREACH,  // can open the Design Approvals app...
+  C.MODE_CC,        // ...and the Case Coordination app.
   C.TAB_SUBMIT,
   C.TAB_OUTBOUND,   // can open Pending Outbound...
   C.TAB_INBOUND,
@@ -88,6 +109,8 @@ const DESIGN_APPROVER_CAPS = [
 ];
 
 const CASE_ENTRY_CAPS = [
+  C.MODE_OUTREACH,
+  C.MODE_CC,
   C.TAB_SUBMIT,
   C.TAB_READY,
   C.TAB_RESCHEDULE,
@@ -95,6 +118,15 @@ const CASE_ENTRY_CAPS = [
   ...CASEFLOW_CAPS,
   // No outbound, inbound, audit, editlog, metrics.
 ];
+
+// CaseFlow production-only roles — each sees ONLY the CaseFlow mode(s) listed.
+// None get MODE_OUTREACH or MODE_CC, so the Design Approvals and Case
+// Coordination apps are hidden from the brand switcher and unreachable.
+const DATA_ENTRY_CAPS  = [C.CASEFLOW_ENTRY];
+const CASE_REVIEW_CAPS = [C.CASEFLOW_REVIEW, C.CASEFLOW_ENTRY, C.CASEFLOW_SCAN];
+const DESIGNER_CAPS    = [C.CASEFLOW_DESIGN, C.CASEFLOW_SCAN];
+const SCANNING_CAPS    = [C.CASEFLOW_SCAN];
+const EDWARD_TA_CAPS   = [...CASEFLOW_CAPS]; // all 4 CaseFlow modes
 
 // Full capability set — account_manager and above see the whole app, EXCEPT
 // restricted capabilities (granted explicitly per role below).
@@ -112,6 +144,12 @@ export const ROLE_CAPABILITIES = {
   // Executive additionally sees the AI case-number suggestion and can hide senders.
   [ROLES.EXECUTIVE]:       new Set([...ALL_CAPS, C.VIEW_CASE_SUGGESTION, C.HIDE_SENDER]),
   [ROLES.ADMIN]:           new Set(ALL_CAPS), // admin also short-circuits in can()
+  // CaseFlow production-only roles (no outreach / case coordination).
+  [ROLES.DATA_ENTRY]:      new Set(DATA_ENTRY_CAPS),
+  [ROLES.CASE_REVIEW]:     new Set(CASE_REVIEW_CAPS),
+  [ROLES.DESIGNER]:        new Set(DESIGNER_CAPS),
+  [ROLES.SCANNING]:        new Set(SCANNING_CAPS),
+  [ROLES.EDWARD_TA]:       new Set(EDWARD_TA_CAPS),
 };
 
 // Returns the current signed-in employee's role string, or null if unknown.

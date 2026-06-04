@@ -3249,7 +3249,7 @@
     <span class="chevron">▼</span>
     <div class="app-switcher" onclick="event.stopPropagation()">
       <div class="header">Spectrum Killian Apps</div>
-      <div class="app-item" onclick="switchMode('outreach'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+      <div class="app-item" data-mode="outreach" onclick="switchMode('outreach'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark"></div>
         <div class="app-info">
           <span class="name">Design Approvals</span>
@@ -3257,7 +3257,7 @@
         </div>
         <span id="check-outreach" class="check">✓</span>
       </div>
-      <div class="app-item" onclick="switchMode('cc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+      <div class="app-item" data-mode="cc" onclick="switchMode('cc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
         <div class="app-info">
           <span class="name">Case Coordination</span>
@@ -3265,7 +3265,7 @@
         </div>
         <span id="check-cc" class="check" style="display:none;">✓</span>
       </div>
-      <div class="app-item" onclick="switchMode('dataentry'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+      <div class="app-item" data-mode="dataentry" onclick="switchMode('dataentry'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
         <div class="app-info">
           <span class="name">Data Entry</span>
@@ -3273,7 +3273,7 @@
         </div>
         <span id="check-dataentry" class="check" style="display:none;">✓</span>
       </div>
-      <div class="app-item" onclick="switchMode('casereview'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+      <div class="app-item" data-mode="casereview" onclick="switchMode('casereview'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
         <div class="app-info">
           <span class="name">Case Review</span>
@@ -3281,7 +3281,7 @@
         </div>
         <span id="check-casereview" class="check" style="display:none;">✓</span>
       </div>
-      <div class="app-item" onclick="switchMode('scanning'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+      <div class="app-item" data-mode="scanning" onclick="switchMode('scanning'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
         <div class="app-info">
           <span class="name">Scanning</span>
@@ -3289,7 +3289,7 @@
         </div>
         <span id="check-scanning" class="check" style="display:none;">✓</span>
       </div>
-      <div class="app-item" onclick="switchMode('design'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+      <div class="app-item" data-mode="design" onclick="switchMode('design'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
         <div class="app-info">
           <span class="name">Design Team</span>

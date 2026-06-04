@@ -2696,7 +2696,36 @@ const CASEFLOW_MODES = {
 const ALL_MODE_TABROWS = ['tabs-outreach','tabs-cc','tabs-dataentry','tabs-casereview','tabs-scanning','tabs-design'];
 const ALL_MODE_CHECKS  = ['check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design'];
 
+// Mode (brand-switcher app) -> capability that gates it. Outreach and Case
+// Coordination are whole apps; the four CaseFlow modes each have their own cap.
+// A role lacking the cap can't see the switcher item and can't switchMode into it.
+const MODE_CAP = {
+  outreach:   CAPABILITIES.MODE_OUTREACH,
+  cc:         CAPABILITIES.MODE_CC,
+  dataentry:  CAPABILITIES.CASEFLOW_ENTRY,
+  casereview: CAPABILITIES.CASEFLOW_REVIEW,
+  scanning:   CAPABILITIES.CASEFLOW_SCAN,
+  design:     CAPABILITIES.CASEFLOW_DESIGN,
+};
+// Brand-switcher display order — also the search order for a role's landing mode.
+const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design'];
+
+// True if the current role may enter this mode.
+function isModePermitted(mode) {
+  const cap = MODE_CAP[mode];
+  return cap ? can(cap) : true;
+}
+
+// First mode (in switcher order) the current role can open — the landing mode
+// for roles whose saved/last mode is now forbidden (e.g. a Scanning-only role).
+function firstPermittedMode() {
+  return MODE_ORDER.find(isModePermitted) || 'outreach';
+}
+
 function switchMode(mode) {
+  // Guard: never enter a mode the role lacks — fall back to its first permitted
+  // mode. Covers a stale localStorage value or an onclick on a hidden item.
+  if (!isModePermitted(mode)) mode = firstPermittedMode();
   currentMode = mode;
   localStorage.setItem('skdla_mode', mode);
   const cf = CASEFLOW_MODES[mode];
@@ -2822,6 +2851,18 @@ function runTabSideEffects(which) {
 // the active tab is one they can actually open. Called once after sign-in
 // approval (boot) — see initAuth callback.
 function applyPermissions() {
+  // 0) Brand-switcher: hide whole apps/modes this role can't enter. CaseFlow
+  //    production-only roles (data_entry/case_review/designer/scanning/edward_ta)
+  //    lose Design Approvals + Case Coordination here; outreach-only roles never
+  //    saw CaseFlow gating before, but now each item respects its cap.
+  MODE_ORDER.forEach(mode => {
+    const item = document.querySelector(`.app-item[data-mode="${mode}"]`);
+    if (item) item.classList.toggle('hidden', !isModePermitted(mode));
+  });
+  // If the current mode isn't permitted (e.g. saved 'outreach' for a Scanning
+  // role), switch to the first one that is.
+  if (!isModePermitted(currentMode)) switchMode(firstPermittedMode());
+
   // 1) Hide non-permitted outreach tabs (the `hidden` class is the pattern
   //    already used elsewhere on tabs/panels).
   document.querySelectorAll('#tabs-outreach .tab').forEach(tab => {
