@@ -2972,6 +2972,11 @@ function runTabSideEffects(which) {
   if (which === 'approval') renderApproval();
   if (which === 'editlog') loadEditLog();
   if (which === 'feedback') loadFeedback();
+  // Case Lookup empty state: show the informational legend until a case loads.
+  if (which === 'lookup') {
+    const r = document.getElementById('lookup-result');
+    if (r && !r.innerHTML.trim()) r.innerHTML = caseLookupLegendHtml(false);
+  }
   if (typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
 }
 
@@ -3193,7 +3198,7 @@ function onCaseLookupInput(value) {
   if (_caseLookupDebounce) clearTimeout(_caseLookupDebounce);
   if (!v) {
     if (box) { box.style.display = 'none'; box.innerHTML = ''; }
-    if (result) result.innerHTML = '';
+    if (result) result.innerHTML = caseLookupLegendHtml(false);
     return;
   }
   _caseLookupDebounce = setTimeout(() => fetchCaseSuggestions(v), 220);
@@ -3310,6 +3315,51 @@ function gotoCaseLookup(caseNumber) {
   lookupCase();
 }
 
+// Informational legend for the Case Lookup tab. Explains the CC'd / not CC'd
+// chip and what each timeline card color means. Shown on its own in the empty
+// state (before any case is looked up) and again — muted (medium-light gray) —
+// at the bottom of a loaded timeline. Pass muted=true for the in-result copy.
+function caseLookupLegendHtml(muted = false) {
+  const chip = (bg, fg, bd, label) =>
+    `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:${bg};color:${fg};border:1px solid ${bd};">${label}</span>`;
+  const ccd    = chip('#DDF4E4', '#157031', '#BCE5C8', "CC'd");
+  const notccd = chip('#F8E3DC', '#A0341A', '#F0C7B9', "not CC'd");
+  const code = s => `<code style="font-size:11px;background:#F1F0EC;border-radius:4px;padding:1px 5px;">${s}</code>`;
+  const dot  = c => `<span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${c};vertical-align:middle;margin-right:7px;"></span>`;
+  const cell = 'padding:3px 14px 3px 0;';
+
+  return `
+    <div class="lookup-legend${muted ? ' muted' : ''}" style="${muted
+        ? 'margin-top:18px;padding-top:14px;border-top:1px solid var(--border,#E5E3DD);color:#9AA3AD;'
+        : 'margin-top:8px;color:var(--charcoal);'}font-size:12px;line-height:1.6;max-width:680px;">
+      <div style="font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-size:11px;margin-bottom:8px;">How to read this case</div>
+
+      <div style="font-weight:600;margin-bottom:4px;">CC'd vs not CC'd</div>
+      <table style="border-collapse:collapse;font-size:12px;margin-bottom:6px;">
+        <thead><tr style="text-align:left;">
+          <th style="${cell}font-weight:600;">channel_source</th>
+          <th style="${cell}font-weight:600;">cc_compliant</th>
+          <th style="padding:3px 0;font-weight:600;">chip</th>
+        </tr></thead>
+        <tbody>
+          <tr><td style="${cell}">${code('system_email')}, ${code('shared_mailbox_email')}</td><td style="${cell}">${code('true')}</td><td style="padding:3px 0;">${ccd}</td></tr>
+          <tr><td style="${cell}">${code('external_email')}</td><td style="${cell}">${code('false')}</td><td style="padding:3px 0;">${notccd}</td></tr>
+          <tr><td style="${cell}">${code('abs_note')}, ${code('phone_call')}</td><td style="${cell}">${code('null')}</td><td style="padding:3px 0;">(no chip)</td></tr>
+        </tbody>
+      </table>
+      <div style="margin-bottom:12px;"><strong>CC'd</strong> = the email was captured in / CC'd to the SKDLA shared mailbox (clearchoice@ / implants@), so the lab has a copy. <strong>not CC'd</strong> = the email was only logged in ABS as a case note - the shared mailbox wasn't CC'd. Plain notes and phone calls aren't emails, so they get no chip.</div>
+
+      <div style="font-weight:600;margin-bottom:4px;">Card colors</div>
+      <div>${dot('var(--blue)')}<strong>Blue</strong> - outbound (we sent it / to the doctor)</div>
+      <div>${dot('#F2A9C7')}<strong>Pink</strong> - inbound (from the doctor's side)</div>
+      <div>${dot('var(--slate)')}<strong>Gray</strong> - internal note or phone call</div>
+      <div>${dot('var(--green)')}<strong>Green</strong> - system email that was sent</div>
+      <div>${dot('var(--gold)')}<strong>Gold</strong> - draft pending approval</div>
+      <div>${dot('var(--red)')}<strong>Red</strong> - rejected draft</div>
+      <div style="margin-top:8px;"><strong>Note By:</strong> the coordinator who logged the note in ABS - not an email sender or recipient.</div>
+    </div>`;
+}
+
 async function lookupCase() {
   const cn = document.getElementById('lookup-input').value.trim();
   if (!cn) { toast('Enter a case number', 'err'); return; }
@@ -3413,9 +3463,9 @@ async function lookupCase() {
     const t = r.event_time ? new Date(r.event_time) : null;
     const timeStr = t ? t.toLocaleDateString([], {timeZone:'America/Los_Angeles'}) + ' ' + t.toLocaleTimeString([], {timeZone:'America/Los_Angeles',hour:'numeric',minute:'2-digit'}) + ' PT' : '';
     const typeLabel = (r.event_type || '').replace(/_/g, ' ');
-    const mediumIcon = { phone: '📞', email: '✉️', note: '📝' }[r.medium] || '';
+    const mediumIcon = '';
     const ccChip = r.cc_compliant === false
-      ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#F8E3DC;color:#A0341A;border:1px solid #F0C7B9;">⚠ not CC&#39;d</span>'
+      ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#F8E3DC;color:#A0341A;border:1px solid #F0C7B9;">not CC&#39;d</span>'
       : (r.cc_compliant === true && r.medium === 'email')
       ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#DDF4E4;color:#157031;border:1px solid #BCE5C8;">CC&#39;d</span>'
       : '';
@@ -3435,8 +3485,10 @@ async function lookupCase() {
           <span><span class="type">${mediumIcon ? mediumIcon + ' ' : ''}${esc(typeLabel)}</span> ${statusChip}${ccChip}</span>
           <span class="time">${esc(timeStr)}</span>
         </div>
-        ${r.counterparty ? '<div class="actor">' + (r.direction === 'inbound' ? 'From' : 'To') + ': ' + esc(r.counterparty) + '</div>' : ''}
-        ${r.actor && r.actor !== r.counterparty ? '<div class="actor">Actor: ' + esc(r.actor) + '</div>' : ''}
+        ${r.event_type === 'case_note'
+            ? ((r.actor || r.counterparty) ? '<div class="actor">Note By: ' + esc(r.actor || r.counterparty) + '</div>' : '')
+            : (r.counterparty ? '<div class="actor">' + (r.direction === 'inbound' ? 'From' : 'To') + ': ' + esc(r.counterparty) + '</div>' : '') +
+              (r.actor && r.actor !== r.counterparty ? '<div class="actor">Actor: ' + esc(r.actor) + '</div>' : '')}
         ${subject}
         ${body}
         ${r.note ? '<div style="font-size:11px;color:var(--slate);margin-top:6px;"><em>' + esc(r.note) + '</em></div>' : ''}
@@ -3444,7 +3496,7 @@ async function lookupCase() {
   }).join('');
 
   document.getElementById('lookup-result').innerHTML =
-    header + '<div class="timeline">' + events + '</div>';
+    header + '<div class="timeline">' + events + '</div>' + caseLookupLegendHtml(true);
 }
 
 // Build a plain-text transcript of the case's communications for AI input
@@ -3532,7 +3584,7 @@ function printCaseLookup() {
           <span class="cnp-event-type">${esc(dirLabel)} · ${esc(typeLabel)}</span>
           <span class="cnp-event-time">${esc(stamp)}</span>
         </div>
-        ${who ? `<div class="cnp-event-who">${esc(r.direction === 'inbound' ? 'From: ' : 'To: ')}${esc(who)}</div>` : ''}
+        ${who ? `<div class="cnp-event-who">${r.event_type === 'case_note' ? 'Note By: ' : esc(r.direction === 'inbound' ? 'From: ' : 'To: ')}${esc(who)}</div>` : ''}
         ${r.subject ? `<div class="cnp-event-subj">${esc(r.subject)}</div>` : ''}
         ${r.body ? `<div class="cnp-event-body">${esc(r.body)}</div>` : ''}
         ${r.note ? `<div class="cnp-event-note"><em>${esc(r.note)}</em></div>` : ''}
