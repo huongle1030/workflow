@@ -13,7 +13,7 @@ import {
 } from './constants.js';
 import { DCL_SCHEMAS } from './schemas.js';
 import { getDcl, dclEsc, dclAttr, dclAutoPopulate, dclVisibility } from './dcl.js';
-import { exportZip } from './export.js';
+import { exportZip, buildAndDownloadZip, fillDesignPdf } from './export.js';
 import * as Data from './data.js';
 import './styles.css';
 
@@ -58,9 +58,15 @@ function rushBadge(r) { return r ? '<span class="rush-badge"><i class="ti ti-bol
 function fmtDate(d) { if (!d) return '<span style="color:var(--color-text-tertiary);font-size:12px">—</span>'; const p = d.split('-'); return `<span style="font-size:12px">${p[1]}/${p[2]}/${p[0]}</span>`; }
 function fmtTs(ts) { try { return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } }
 function deToday() { const d = new Date(); const p = n => ('0' + n).slice(-2); return p(d.getMonth() + 1) + '/' + p(d.getDate()) + '/' + d.getFullYear(); }
-function tblRows(list, mode) { return list.map(c => `<div class="case-row" onclick="CF.openCase('${mode}','${c.id}')" tabindex="0" role="button"><div class="td case-id">${c.caseNum || '—'}</div><div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div><div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div><div class="td">${badge(c.stage)}</div><div class="td">${rushBadge(c.rush)}</div><div class="td">${fmtDate(c.shipDate)}</div><div class="td">${fmtDate(c.drDueDate)}</div></div>`).join(''); }
+function tblRows(list, mode) { return list.map(c => `<div class="case-row" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" onclick="CF.openCase('${mode}','${c.id}')" tabindex="0" role="button"><div class="td case-id">${c.caseNum || '—'}</div><div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div><div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div><div class="td">${badge(c.stage)}</div><div class="td">${rushBadge(c.rush)}</div><div class="td">${fmtDate(c.shipDate)}</div><div class="td">${fmtDate(c.drDueDate)}</div></div>`).join(''); }
 function tblWrap(list, mode) { return `<div class="cases-table"><div class="table-header"><div class="th">Case #</div><div class="th">Patient</div><div class="th">Doctor</div><div class="th">Stage</div><div class="th">Rush</div><div class="th">Ship Date</div><div class="th">Dr Due Date</div></div>${tblRows(list, mode)}</div>`; }
 function emptyMsg(msg) { return `<div class="cf-empty"><i class="ti ti-check"></i>${msg}</div>`; }
+// Soonest-to-ship first; cases without a ship date sink to the bottom.
+function sortByShip(list) { return list.slice().sort((a, b) => { const av = a.shipDate || '', bv = b.shipDate || ''; if (av && bv) return av < bv ? -1 : (av > bv ? 1 : 0); if (av) return -1; if (bv) return 1; return 0; }); }
+// Per-queue case-number search. Filters the rendered rows in place (no re-render →
+// keeps input focus); matches case number or display id via the row's data-search.
+function queueSearchBar() { return `<div class="cf-queue-search"><i class="ti ti-search"></i><input type="text" placeholder="Search case #…" oninput="CF.filterQueue(this)" aria-label="Search by case number" /></div>`; }
+function filterQueue(inp) { const term = String(inp.value || '').trim().toLowerCase(); const root = inp.closest('.cf-root') || document; root.querySelectorAll('.case-row').forEach(row => { const hay = (row.getAttribute('data-search') || '').toLowerCase(); row.style.display = (!term || hay.indexOf(term) > -1) ? '' : 'none'; }); }
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function toast(msg) { const t = document.getElementById('cf-toast'); if (!t) return; document.getElementById('cf-toast-msg').textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2800); }
 
@@ -74,7 +80,7 @@ export async function renderCaseFlowMode(mode) {
 }
 
 export async function reload() {
-  try { cases = await Data.loadAll(); loaded = true; }
+  try { cases = await Data.loadAll(); loaded = true; releaseOutsourcedToQc(); }
   catch (err) { toast('Load failed: ' + err.message); cases = []; }
 }
 
@@ -93,45 +99,99 @@ function detailHeader(c, mode) {
 function renderQueue(mode) {
   if (mode === 'dataentry') return renderDataEntryQueue();
   if (mode === 'design') return renderDesignQueue();
+  if (mode === 'casereview') return renderCaseReviewQueue();
   const stages = MODES[mode].stages;
-  const list = cases.filter(c => stages.includes(c.stage));
-  return `<div style="margin-bottom:14px"><div style="font-size:16px;font-weight:600">${MODES[mode].title}</div></div>` +
+  const list = sortByShip(cases.filter(c => stages.includes(c.stage)));
+  return `<div style="margin-bottom:14px"><div style="font-size:16px;font-weight:600">${MODES[mode].title}</div></div>` + queueSearchBar() +
     (list.length ? tblWrap(list, mode) : emptyMsg('No cases pending'));
 }
 
-// ── Design Team queue (5 sub-tabs by phase) ─────────────────────────
+// ── Design routing helpers + outsource partners ─────────────────────
+const OUTSOURCE_PARTNERS = { adite: 'Adite', heygears: 'HeyGears', cadora: 'Cadora' };
+function designRouteOf(c) { return (c.aoxReview && c.aoxReview.designRoute) || null; }
+function partnerOf(c) { return (c.aoxReview && c.aoxReview.outsourcePartner) || null; }
+
+// ── Design Team queue (sub-tabs by phase + design routes) ───────────
+// A routed case (Bar Design / VJig / Milling) stays at stage 'Design Check' and is
+// bucketed by aoxReview.designRoute. Outsource cases are stage 'Outsourcing' and
+// grouped by aoxReview.outsourcePartner. Milling sits last (after Complete).
 let designTab = 'design';
 const DESIGN_SUBTABS = [
-  ['design', 'Design', ['Design Check']],
-  ['outsource', 'Outsource', ['Outsourcing']],
-  ['qc', 'QC', ['QC']],
-  ['rework', 'Rework', ['QC Failed - Rework', 'QC Failed - Resend']],
-  ['complete', 'Complete', ['Complete']],
+  ['design', 'Design', c => c.stage === 'Design Check' && !designRouteOf(c)],
+  ['bar', 'Bar Design', c => c.stage === 'Design Check' && designRouteOf(c) === 'bar'],
+  ['vjig', 'Design VJig/Custom Tray', c => c.stage === 'Design Check' && designRouteOf(c) === 'vjig'],
+  ['outsource', 'Outsource', c => c.stage === 'Outsourcing'],
+  ['qc', 'QC', c => c.stage === 'QC'],
+  ['rework', 'Rework', c => c.stage === 'QC Failed - Rework' || c.stage === 'QC Failed - Resend'],
+  ['complete', 'Complete', c => c.stage === 'Complete'],
+  ['milling', 'Milling', c => c.stage === 'Design Check' && designRouteOf(c) === 'milling'],
 ];
+function renderOutsourceGroups(list) {
+  if (!list.length) return emptyMsg('No cases here');
+  let html = ''; const assigned = new Set();
+  Object.keys(OUTSOURCE_PARTNERS).forEach((key, i) => {
+    const g = list.filter(c => partnerOf(c) === key); g.forEach(c => assigned.add(c.id));
+    html += `<div class="sec-label"${i === 0 ? ' style="margin-top:0"' : ''}>${OUTSOURCE_PARTNERS[key]} <span style="color:var(--color-text-tertiary)">(${g.length})</span></div>` + (g.length ? tblWrap(g, 'design') : emptyMsg('No cases for ' + OUTSOURCE_PARTNERS[key]));
+  });
+  const other = list.filter(c => !assigned.has(c.id));
+  if (other.length) html += `<div class="sec-label">Unassigned <span style="color:var(--color-text-tertiary)">(${other.length})</span></div>` + tblWrap(other, 'design');
+  return html;
+}
 function renderDesignQueue() {
-  const tabs = DESIGN_SUBTABS.map(([k, label, st]) => {
-    const n = cases.filter(c => st.includes(c.stage)).length;
+  const tabs = DESIGN_SUBTABS.map(([k, label, pred]) => {
+    const n = cases.filter(pred).length;
     return `<button class="de-tab${designTab === k ? ' active' : ''}" onclick="CF.setDesignTab('${k}')">${label}<span class="de-tab-count">${n}</span></button>`;
   }).join('');
   const active = DESIGN_SUBTABS.find(t => t[0] === designTab) || DESIGN_SUBTABS[0];
-  const list = cases.filter(c => active[2].includes(c.stage));
+  const list = sortByShip(cases.filter(active[2]));
   const head = `<div style="font-size:16px;font-weight:600;margin-bottom:12px">Design Team</div>`;
-  return head + `<div class="de-tabs">${tabs}</div>` + (list.length ? tblWrap(list, 'design') : emptyMsg('No cases here'));
+  const body = designTab === 'outsource' ? renderOutsourceGroups(list) : (designTab === 'qc' ? renderQcTab(list) : (list.length ? tblWrap(list, 'design') : emptyMsg('No cases here')));
+  return head + `<div class="de-tabs">${tabs}</div>` + queueSearchBar() + body;
 }
 function setDesignTab(t) { designTab = t; renderMode('design'); }
+// QC tab: grouped by outsource partner (like the Outsource step) + a partner filter.
+let qcPartnerFilter = 'all';
+function setQcPartner(p) { qcPartnerFilter = p; renderMode('design'); }
+function renderQcTab(list) {
+  const opts = [['all', 'All'], ['adite', 'Adite'], ['heygears', 'HeyGears'], ['cadora', 'Cadora']];
+  const filterBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap"><span class="sec-label" style="margin:0">Filter by partner</span>${opts.map(([k, label]) => `<button class="de-tab${qcPartnerFilter === k ? ' active' : ''}" onclick="CF.setQcPartner('${k}')">${label}</button>`).join('')}</div>`;
+  let body;
+  if (qcPartnerFilter === 'all') body = renderOutsourceGroups(list);
+  else { const g = list.filter(c => partnerOf(c) === qcPartnerFilter); body = g.length ? tblWrap(g, 'design') : emptyMsg('No QC cases for ' + (OUTSOURCE_PARTNERS[qcPartnerFilter] || qcPartnerFilter)); }
+  return filterBar + body;
+}
 
 // ── Data Entry queue (3 sub-tabs) ───────────────────────────────────
 let deTab = 'main';
 function renderDataEntryQueue() {
   const de = cases.filter(c => c.stage === 'Data Entry');
-  const main = de.filter(c => !c.deHold), models = de.filter(c => c.deHold === 'models'), missing = de.filter(c => c.deHold === 'missing');
-  const tabs = [['main', 'Data Entry', main.length], ['models', 'Waiting for physical models', models.length], ['missing', 'Waiting for missing information', missing.length]]
+  const isReturned = c => !!(c.aox && c.aox.returnedFromReview);
+  const returned = de.filter(isReturned);
+  const main = de.filter(c => !c.deHold && !isReturned(c)), models = de.filter(c => c.deHold === 'models'), missing = de.filter(c => c.deHold === 'missing');
+  const tabs = [['main', 'Data Entry', main.length], ['models', 'Waiting for physical models', models.length], ['missing', 'Waiting for missing information', missing.length], ['returned', 'Returned from Case Review for missing/incorrect information', returned.length]]
     .map(t => `<button class="de-tab${deTab === t[0] ? ' active' : ''}" onclick="CF.setDeTab('${t[0]}')">${t[1]}<span class="de-tab-count">${t[2]}</span></button>`).join('');
-  const list = deTab === 'models' ? models : (deTab === 'missing' ? missing : main);
+  const list = sortByShip(deTab === 'models' ? models : (deTab === 'missing' ? missing : (deTab === 'returned' ? returned : main)));
   const head = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-size:16px;font-weight:600">Data Entry</div><button class="btn btn-primary btn-sm" onclick="CF.openNewCase()"><i class="ti ti-plus"></i> New Case</button></div>`;
-  return head + `<div class="de-tabs">${tabs}</div>` + (list.length ? tblWrap(list, 'dataentry') : emptyMsg('No cases here'));
+  return head + `<div class="de-tabs">${tabs}</div>` + queueSearchBar() + (list.length ? tblWrap(list, 'dataentry') : emptyMsg('No cases here'));
 }
 function setDeTab(t) { deTab = t; renderMode('dataentry'); }
+
+// ── Case Review queue (sub-tabs: main + design returns / holds / TA) ─
+let crTab = 'main';
+function crBucketOf(c) { return (c.aoxReview && c.aoxReview.crBucket) || null; }
+function renderCaseReviewQueue() {
+  const cr = cases.filter(c => c.stage === 'Review' || c.stage === 'Case Coordination');
+  const designReturn = cr.filter(c => crBucketOf(c) === 'design_return');
+  const holdMissing = cr.filter(c => crBucketOf(c) === 'hold_missing');
+  const ta = cr.filter(c => crBucketOf(c) === 'ta');
+  const main = cr.filter(c => !crBucketOf(c)); // plain Review + Case Coordination
+  const tabs = [['main', 'Case Review', main.length], ['design_return', 'Cases sent back from Design', designReturn.length], ['hold_missing', 'Holds for missing information', holdMissing.length], ['ta', 'Technical advisor', ta.length]]
+    .map(t => `<button class="de-tab${crTab === t[0] ? ' active' : ''}" onclick="CF.setCrTab('${t[0]}')">${t[1]}<span class="de-tab-count">${t[2]}</span></button>`).join('');
+  const list = sortByShip(crTab === 'design_return' ? designReturn : (crTab === 'hold_missing' ? holdMissing : (crTab === 'ta' ? ta : main)));
+  const head = `<div style="font-size:16px;font-weight:600;margin-bottom:12px">Case Review</div>`;
+  return head + `<div class="de-tabs">${tabs}</div>` + queueSearchBar() + (list.length ? tblWrap(list, 'casereview') : emptyMsg('No cases here'));
+}
+function setCrTab(t) { crTab = t; renderMode('casereview'); }
 
 // ── navigation ──────────────────────────────────────────────────────
 function openCase(mode, id) {
@@ -159,11 +219,12 @@ function buildAoxReviewChecklist(caseId) {
     const val = r[group] && r[group][idx];
     return `<div class="pf-row"><span class="pf-label">${label}</span><div class="pf-btns"><button class="pf-btn${val === 'pass' ? ' pass' : ''}" onclick="CF.setPF('${caseId}','${group}',${idx},'pass')">Pass</button><button class="pf-btn${val === 'fail' ? ' fail' : ''}" onclick="CF.setPF('${caseId}','${group}',${idx},'fail')">Fail</button></div></div>`;
   }
-  function fileDrop(name) {
+  function fileDrop(name, accept) {
     const key = name.replace(/[^a-zA-Z0-9]/g, '_');
+    const acc = accept || '';
     const files = (r.aspFiles && r.aspFiles[key]) || [];
     const list = files.length ? `<div class="file-list">${files.map((f, fi) => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span><button class="btn btn-sm" style="margin-left:auto;padding:2px 7px" onclick="CF.aspRemoveFile('${caseId}','${key}',${fi})"><i class="ti ti-x"></i></button></div>`).join('')}</div>` : '';
-    return `<div class="form-group" style="margin-bottom:10px"><label>${name}</label><div class="upload-zone" ondragover="CF.aspDragOver(event)" ondragleave="CF.aspDragLeave(event)" ondrop="CF.aspDrop(event,'${caseId}','${key}')" onclick="CF.aspPick('${caseId}','${key}')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Drag files here or click to attach</div></div>${list}</div>`;
+    return `<div class="form-group" style="margin-bottom:10px"><label>${name}</label><div class="upload-zone" ondragover="CF.aspDragOver(event)" ondragleave="CF.aspDragLeave(event)" ondrop="CF.aspDrop(event,'${caseId}','${key}','${acc}')" onclick="CF.aspPick('${caseId}','${key}','${acc}')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Drag files here or click to attach</div>${acc ? `<div class="upload-hint">Accepts ${acc} files</div>` : ''}</div>${list}</div>`;
   }
   function reviewSections() {
     return `
@@ -178,6 +239,8 @@ function buildAoxReviewChecklist(caseId) {
         ${SCAN_ITEMS.map((lbl, i) => pfRow('scanItems', i, lbl)).join('')}
         <span class="sec-label">Attach scan files</span>
         ${TRI_SCAN_SECTIONS.map(n => fileDrop(n)).join('')}
+        <div class="d-check-item${r.predesigned ? ' checked' : ''}" onclick="CF.togglePredesigned('${caseId}')" style="margin-top:6px"><input type="checkbox" ${r.predesigned ? 'checked' : ''}><label>Predesigned Case</label></div>
+        ${r.predesigned ? `<div style="margin-top:10px">${fileDrop('Predesign CAD', '.cad,.stl')}</div>` : ''}
         <div class="form-group" style="margin-top:12px"><label>Scans / Files Notes</label><textarea id="scan-notes" placeholder="Add notes here..." onchange="CF.saveReviewNotes('${caseId}')">${esc(r.scanNotes || '')}</textarea></div>
       </div>
       <div class="aox-section">
@@ -250,8 +313,11 @@ function setAspScrewType(id, idx) { const r = getR(id); r.aspScrewType = r.aspSc
 function setAspScrewCount(id, val) { getR(id).aspScrewCount = val; cfSave(getC(id)); }
 function aspDragOver(ev) { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.add('drag-over'); }
 function aspDragLeave(ev) { ev.currentTarget.classList.remove('drag-over'); }
-async function aspDrop(ev, id, key) { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.remove('drag-over'); const fl = ev.dataTransfer && ev.dataTransfer.files; if (fl && fl.length) await uploadReviewFiles(id, key, Array.from(fl)); }
-function aspPick(id, key) { pickFiles(async files => { await uploadReviewFiles(id, key, files); }); }
+function acceptOk(name, accept) { if (!accept) return true; const exts = accept.split(',').map(s => s.trim().toLowerCase()).filter(Boolean); const lower = String(name || '').toLowerCase(); return exts.some(e => lower.endsWith(e)); }
+function filterByAccept(files, accept) { if (!accept) return files; const ok = files.filter(f => acceptOk(f.name, accept)); if (ok.length < files.length) toast('Only ' + accept + ' files are accepted here'); return ok; }
+async function aspDrop(ev, id, key, accept) { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.remove('drag-over'); const fl = ev.dataTransfer && ev.dataTransfer.files; if (fl && fl.length) { const files = filterByAccept(Array.from(fl), accept); if (files.length) await uploadReviewFiles(id, key, files); } }
+function aspPick(id, key, accept) { pickFiles(async files => { const ok = filterByAccept(files, accept); if (ok.length) await uploadReviewFiles(id, key, ok); }, accept); }
+function togglePredesigned(id) { const r = getR(id); r.predesigned = !r.predesigned; rebuildAoxReview(id); }
 async function uploadReviewFiles(id, key, files) {
   const c = getC(id); const r = getR(id); if (!r.aspFiles) r.aspFiles = {}; if (!r.aspFiles[key]) r.aspFiles[key] = [];
   for (const f of files) { try { const meta = await Data.uploadFile(c, 'review', f, key); r.aspFiles[key].push({ name: meta.name, size: meta.size, path: meta.path }); } catch (e) { toast('Upload failed: ' + e.message); } }
@@ -313,7 +379,17 @@ function buildAox(caseId) {
   if (a.cat === 'ENG') catSub = buildENGSection(a);
   if (a.cat === 'TRI') catSub = buildTRISection(a);
   if (a.cat && !['CC', 'ASP', 'SKD', 'ENG', 'TRI'].includes(a.cat)) catSub = `<div class="alert alert-info" style="margin-top:8px;margin-bottom:0"><i class="ti ti-tools"></i> Selections for <strong>${CAT_NAMES[a.cat]}</strong> coming soon.</div>`;
-  const addonSub = a.addon ? `<div style="padding-left:4px;margin-top:6px">${optRows('ADDON', isSet(a.addonSel) ? a.addonSel : -1)}</div>` : '';
+  // Add-on case-number box, shown right under each selected add-on item.
+  const addonCaseBox = (field, val) => `<div class="form-group" style="margin:6px 0 10px;padding-left:8px"><label>Add On Case Number</label><input type="text" class="aox-text" data-aox-field="${field}" value="${dclAttr(val || '')}" placeholder="Enter add-on case number"></div>`;
+  // Denture / Night Guard — multi-select (a case can have both).
+  const addonSub = a.addon ? `<div style="padding-left:4px;margin-top:6px">
+      <div class="opt-row${a.addonDenture ? ' sel' : ''}" data-aox-toggle="addonDenture"><input type="checkbox" ${a.addonDenture ? 'checked' : ''}><span class="opt-row-label">${OPTS.ADDON[0]}</span></div>
+      ${a.addonDenture ? addonCaseBox('addonDentureCase', a.addonDentureCase) : ''}
+      <div class="opt-row${a.addonNightguard ? ' sel' : ''}" data-aox-toggle="addonNightguard"><input type="checkbox" ${a.addonNightguard ? 'checked' : ''}><span class="opt-row-label">${OPTS.ADDON[1]}</span></div>
+      ${a.addonNightguard ? addonCaseBox('addonNightguardCase', a.addonNightguardCase) : ''}
+    </div>` : '';
+  // Manufacturing Jig / LFX Model — single-select (one or the other).
+  const addonMfgSub = a.addonMfg ? `<div style="padding-left:4px;margin-top:6px">${['Manufacturing Jig', 'LFX Model'].map((txt, i) => `<div class="opt-row${a.addonMfgSel === i ? ' sel' : ''}" data-aox-field="addonMfgSel" data-aox-val="${i}"><input type="radio" ${a.addonMfgSel === i ? 'checked' : ''}><span class="opt-row-label">${txt}</span></div>${a.addonMfgSel === i ? addonCaseBox(i === 0 ? 'addonMfgJigCase' : 'addonLfxCase', i === 0 ? a.addonMfgJigCase : a.addonLfxCase) : ''}`).join('')}</div>` : '';
   return `<div class="panel" id="aox-panel" data-case-id="${caseId}">
     <div class="panel-title"><i class="ti ti-clipboard-check"></i> Data Entry AOX Checklist</div>
     <span class="sec-label" style="margin-top:0">Case details</span>
@@ -343,6 +419,8 @@ function buildAox(caseId) {
     <div class="divider"></div>
     <div class="toggle-row${a.addon ? ' on' : ''}" data-aox-toggle="addon"><input type="checkbox" ${a.addon ? 'checked' : ''}><label>Add on Denture / Night Guard</label></div>
     <div id="addon-sub">${addonSub}</div>
+    <div class="toggle-row${a.addonMfg ? ' on' : ''}" data-aox-toggle="addonMfg" style="margin-top:8px"><input type="checkbox" ${a.addonMfg ? 'checked' : ''}><label>Add on Manufacturing Jig / LFX Model</label></div>
+    <div id="addon-mfg-sub">${addonMfgSub}</div>
     <div class="divider"></div>
     <div class="submit-block">
       <div class="submit-block-title"><i class="ti ti-flag-check" style="font-size:14px"></i> Finalize Case Details</div>
@@ -420,14 +498,14 @@ function reviewSummaryPanel(c) {
     body += sect('Scan and Files', scan);
     let dn = '';
     if (r.designNeeds != null && r.designNeeds !== undefined) dn += pair('Design type', DESIGN_NEEDS_OPTS[r.designNeeds] || '—');
-    if (r.drApproval) dn += pair('Doctor design approval', r.drApproval === 'yes' ? 'Yes — Required' : 'No — Not required');
+    if (r.drApproval === 'yes') dn += pair('Doctor design approval', 'Yes — Required');
     body += sect('Design Needs', dn);
   } else {
     let dr = '';
     if (r.aspDesignReq != null && r.aspDesignReq !== undefined) { dr += pair('Requirement', ASP_DESIGN_REQ[r.aspDesignReq] || '—'); if ((r.aspDesignReq === 1 || r.aspDesignReq === 2) && r.aspMouldName) dr += pair(r.aspDesignReq === 1 ? 'Tooth mould' : 'Mould name', esc(r.aspMouldName)); }
     body += sect('Design Requirements', dr);
     let ds = '';
-    if (r.aspSpec) ASP_SPEC_ITEMS.forEach(it => { if (r.aspSpec[it[0]]) ds += pair(it[1], yn(r.aspSpec[it[0]])); });
+    if (r.aspSpec) ASP_SPEC_ITEMS.forEach(it => { if (r.aspSpec[it[0]] === 'yes') ds += pair(it[1], 'Yes'); });
     body += sect('Design Specifics', ds);
     const lfx = r.aspSpec && r.aspSpec.lfx; const ccDig = r.aspSpec && r.aspSpec.ccDigital === 'yes';
     let sf = '';
@@ -484,14 +562,34 @@ function renderCaseDetail(c) {
   const si = stageN(c.stage); const ps = ['Data Entry', 'Review', 'Design', 'Outsource', 'QC', 'Complete'];
   const prog = `<div class="progress-track" role="list">${ps.map((s, i) => `<div class="prog-step" role="listitem"><div class="prog-node"><div class="prog-circle${i < si ? ' done' : i === si ? ' active' : ''}">${i < si ? '<i class="ti ti-check" style="font-size:12px"></i>' : (i + 1)}</div><span class="prog-label${i === si ? ' active' : ''}">${s}</span></div>${i < ps.length - 1 ? `<div class="prog-connector${i < si ? ' done' : ''}"></div>` : ''}</div>`).join('')}${c.stage === 'Scanning' ? `<div style="margin-left:8px;padding:3px 10px;background:#F4F0E4;border-radius:10px;font-size:11px;color:#6B5E2F;font-weight:500;white-space:nowrap"><i class="ti ti-scan" style="font-size:11px;margin-right:4px"></i>Scanning</div>` : ''}</div>`;
   const tl = `<div class="timeline">${(c.timeline.length ? c.timeline : ['No activity yet']).map((t, i, arr) => { const o = (t && typeof t === 'object') ? t : null; const text = o ? o.text : t; const sub = o ? `${o.by} • ${fmtTs(o.at)}` : (i === 0 ? c.updated : 'Recently'); return `<div class="tl-item"><div class="tl-dot${i === arr.length - 1 && c.stage !== 'Complete' ? ' active' : ' done'}"><i class="ti ti-${i === arr.length - 1 && c.stage !== 'Complete' ? 'clock' : 'check'}" style="font-size:12px"></i></div><div class="tl-line"></div><div class="tl-content"><div class="tl-title">${esc(text)}</div><div class="tl-sub">${esc(sub)}</div></div></div>`; }).join('')}</div>`;
-  const fH = c.files.length ? c.files.map(f => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span></div>`).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files attached</span>';
-  const rfH = c.reviewFiles.length ? c.reviewFiles.map(f => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span></div>`).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files yet</span>';
-  const sfH = c.scanFiles && c.scanFiles.length ? c.scanFiles.map(f => `<div class="file-item"><i class="ti ti-scan"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span></div>`).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No scan files yet</span>';
+  // Open button is extension-aware: .stl -> 3Shape, .cad -> exocad (download so the
+  // OS file-association launches the desktop app), everything else -> in-tab preview.
+  const openBtn = (kind, i, f, key) => {
+    if (!f.path) return '';
+    const ext = fileExt(f.name);
+    const label = ext === 'stl' ? 'Open in 3Shape' : (ext === 'cad' ? 'Open in exocad' : 'Preview');
+    const icon = (ext === 'stl' || ext === 'cad') ? 'external-link' : 'eye';
+    const args = kind === 'asp' ? `'${c.id}','asp',${i},'${key}'` : `'${c.id}','${kind}',${i}`;
+    return `<button class="btn btn-sm" style="margin-left:auto;padding:2px 9px" onclick="event.stopPropagation();CF.previewFile(${args})"><i class="ti ti-${icon}"></i> ${label}</button>`;
+  };
+  const fileRow = (f, i, kind, icon) => `<div class="file-item"><i class="ti ti-${icon}"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span>${openBtn(kind, i, f)}</div>`;
+  const aspFileRow = (f, key, i) => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span>${openBtn('asp', i, f, key)}</div>`;
+  const fH = c.files.length ? c.files.map((f, i) => fileRow(f, i, 'entry', 'file')).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files attached</span>';
+  const rfH = c.reviewFiles.length ? c.reviewFiles.map((f, i) => fileRow(f, i, 'review', 'file')).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files yet</span>';
+  const sfH = c.scanFiles && c.scanFiles.length ? c.scanFiles.map((f, i) => fileRow(f, i, 'scan', 'scan')).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No scan files yet</span>';
   const a = getA(c.id); const r = getR(c.id);
-  let sp = '', reviewInfoPanel = '';
+  // Files the Case Review team added (extra design files + the AOX scan/CAD drop
+  // boxes). Surfaced under "Entry files" in the Design tab so the design team sees
+  // everything in one place. aspFiles is keyed by section -> [file].
+  const isDesign = selectedMode === 'design';
+  const crReviewRows = c.reviewFiles.map((f, i) => fileRow(f, i, 'review', 'file')).join('');
+  const crAspRows = r.aspFiles ? Object.keys(r.aspFiles).map(key => (r.aspFiles[key] || []).map((f, i) => aspFileRow(f, key, i)).join('')).join('') : '';
+  const caseReviewFilesHtml = crReviewRows + crAspRows;
+  let sp = '', reviewInfoPanel = '', leftReviewSel = '';
 
   if (c.stage === 'Data Entry') {
-    sp = `<div class="panel"><div class="panel-title"><i class="ti ti-pencil"></i> Case Information</div>
+    const returnBanner = a.returnedFromReview ? `<div class="panel"><div class="alert alert-warn" style="margin:0"><i class="ti ti-arrow-back-up"></i> <strong>Returned from Case Review</strong> — missing/incorrect information.${a.returnReason ? ` <span style="display:block;margin-top:6px">${esc(a.returnReason)}</span>` : ''}</div></div>` : '';
+    sp = returnBanner + `<div class="panel"><div class="panel-title"><i class="ti ti-pencil"></i> Case Information</div>
       <div class="form-group" style="margin-bottom:12px"><label>Patient name</label><input type="text" value="${dclAttr(c.patient)}" id="de-patient"></div>
       <div class="form-group" style="margin-bottom:12px"><label>Doctor</label><input type="text" value="${dclAttr(c.doctor)}" id="de-doctor" placeholder="Dr. First &amp; Last name"></div>
       <div class="form-row"><div class="form-group"><label>Dr due date</label><input type="date" id="de-drdue" value="${c.drDueDate}"></div></div>
@@ -522,6 +620,43 @@ function renderCaseDetail(c) {
       ${a.cat ? `<div class="info-pair"><span class="info-key">Case DSO</span><span class="info-val">${CAT_NAMES[a.cat] || a.cat}</span></div>` : ''}
       ${a.crm && a.refCase ? `<div class="info-pair"><span class="info-key">Cont / Remake / Update</span><span class="info-val">Ref case #${esc(a.refCase)}</span></div>` : ''}
     </div></div>`;
+    const crBucket = (r && r.crBucket) || null;
+    if (crBucket) {
+    // Case in a Case-Review bucket: sent back from Design, on hold, or escalated to
+    // the Technical Advisor. Shows DE + Case Review selections, every uploaded file,
+    // a "Missing info" upload zone, a clarification note, and the routing buttons.
+    const bucketLabel = crBucket === 'design_return' ? 'Sent back from Design' : (crBucket === 'hold_missing' ? 'On hold for missing information' : 'Escalated to Technical Advisor');
+    const crReviewFilesHtml = c.reviewFiles.map((f, i) => fileRow(f, i, 'review', 'file')).join('')
+      + (r.aspFiles ? Object.keys(r.aspFiles).filter(k => k !== 'missing_info').map(k => (r.aspFiles[k] || []).map((f, i) => aspFileRow(f, k, i)).join('')).join('') : '');
+    const miFiles = (r.aspFiles && r.aspFiles.missing_info) || [];
+    const miRow = (f, i) => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span>${f.path ? `<button class="btn btn-sm" style="margin-left:auto;padding:2px 9px" onclick="event.stopPropagation();CF.previewFile('${c.id}','asp',${i},'missing_info')"><i class="ti ti-eye"></i> Preview</button>` : ''}<button class="btn btn-sm btn-danger" style="padding:2px 7px;margin-left:${f.path ? '6px' : 'auto'}" onclick="CF.crMissingRemove('${c.id}',${i})"><i class="ti ti-x"></i></button></div>`;
+    const miList = miFiles.length ? miFiles.map((f, i) => miRow(f, i)).join('') : '';
+    sp = `<div class="panel"><div class="panel-title"><i class="ti ti-arrow-back-up" style="color:#8E6510"></i> ${bucketLabel}</div>
+      ${r.designReturnReason ? `<div class="alert alert-warn" style="margin:0 0 10px"><i class="ti ti-info-circle"></i> <strong>Reason from Design:</strong> ${esc(r.designReturnReason)}</div>` : ''}
+      ${crBucket === 'ta' && r.taNotes ? `<div class="alert alert-info" style="margin:0 0 10px"><i class="ti ti-user-up"></i> <strong>Notes for TA:</strong> ${esc(r.taNotes)}</div>` : ''}
+      ${crBucket === 'hold_missing' ? `<div class="alert alert-warn" style="margin:0"><i class="ti ti-clock"></i> This case is on hold awaiting missing information.</div>` : ''}
+    </div>
+    ${reviewSummaryPanel(c)}
+    ${doctorReqsPanel(c)}
+    <div class="panel"><div class="panel-title"><i class="ti ti-files"></i> Files from Data Entry &amp; Case Review</div>
+      <span class="sec-label" style="margin-top:0">Data Entry files</span><div class="file-list">${fH}</div>
+      <span class="sec-label">Case Review files</span><div class="file-list">${crReviewFilesHtml || '<span style="font-size:12px;color:var(--color-text-tertiary)">None</span>'}</div>
+    </div>
+    <div class="panel"><div class="panel-title"><i class="ti ti-upload"></i> Missing info &amp; clarification</div>
+      <div class="form-group" style="margin-bottom:14px"><label>Missing info</label><div class="upload-zone" ondragover="CF.aspDragOver(event)" ondragleave="CF.aspDragLeave(event)" ondrop="CF.crMissingDrop(event,'${c.id}')" onclick="CF.crMissingPick('${c.id}')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Drag files here or click to attach</div></div><div class="file-list">${miList}</div></div>
+      <div class="form-group" style="margin-bottom:14px"><label>Clarification / Notes</label><textarea id="cr-clarification" placeholder="Add clarification or notes..." onchange="CF.saveCrFields('${c.id}')">${esc(r.crClarification || '')}</textarea></div>
+      <div class="actions-bar">
+        <button class="btn btn-primary" onclick="CF.crSendToDesign('${c.id}')"><i class="ti ti-arrow-right"></i> Send back to design with new files/clarification</button>
+        <button class="btn" onclick="CF.crHoldMissing('${c.id}')"><i class="ti ti-player-pause"></i> Place on hold for missing information</button>
+        <button class="btn" onclick="CF.showTaNotes()"><i class="ti ti-user-up"></i> Escalate to TA</button>
+        <button class="btn btn-scan" onclick="CF.crPassToScanning('${c.id}')"><i class="ti ti-scan"></i> Pass to Scanning team</button>
+      </div>
+      <div id="ta-notes-block" style="display:none;margin-top:12px">
+        <div class="form-group"><label>Notes for TA</label><textarea id="cr-ta-notes" placeholder="Add notes for the Technical Advisor...">${esc(r.taNotes || '')}</textarea></div>
+        <div class="actions-bar"><button class="btn btn-primary" onclick="CF.crEscalateTa('${c.id}')"><i class="ti ti-send"></i> Confirm — Escalate to TA</button></div>
+      </div>
+    </div>`;
+    } else {
     sp = `<div class="panel"><div class="panel-title"><i class="ti ti-eye"></i> Case Review</div>
     <div class="alert alert-info"><i class="ti ti-info-circle"></i> Review the submitted data on the left, then complete the AOX checklist, add design notes, and route to Design or Scanning.</div></div>
     ${buildAoxReviewChecklist(c.id)}
@@ -533,14 +668,21 @@ function renderCaseDetail(c) {
     </div>
     <div class="form-group" style="margin-bottom:14px"><label>Add any extra files needed for design</label><div class="upload-zone" onclick="CF.pick('review')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Attach reference files, assets</div></div><div class="file-list">${rfH}</div></div>
     <div class="actions-bar">
+      <button class="btn btn-sm" onclick="CF.exportCaseReviewZip('${c.id}')"><i class="ti ti-folder-down"></i> Export Case Folder</button>
       <button class="btn btn-primary" onclick="CF.passToDesign('${c.id}')"><i class="ti ti-arrow-right"></i> Pass to Design</button>
       <button class="btn btn-scan" onclick="CF.passToScanning('${c.id}')"><i class="ti ti-scan"></i> Pass to Scanning</button>
       <button class="btn" onclick="CF.showCoordReason()"><i class="ti ti-player-pause"></i> Place on Hold &amp; Send to Case Coordination</button>
+      <button class="btn" onclick="CF.showReturnReason()"><i class="ti ti-arrow-back-up"></i> Place on Hold &amp; Send Back to Data Entry for Missing Information</button>
     </div>
     <div id="coord-reason-block" style="display:none;margin-top:12px">
       <div class="form-group"><label>Reason for Sending to Case Coordination</label><textarea id="coord-reason" placeholder="Enter reason for sending to Case Coordination..."></textarea></div>
       <div class="actions-bar"><button class="btn btn-primary" onclick="CF.sendToCoordination('${c.id}')"><i class="ti ti-send"></i> Confirm — Place on Hold</button></div>
+    </div>
+    <div id="return-de-block" style="display:none;margin-top:12px">
+      <div class="form-group"><label>Missing / Incorrect Information for Data Entry</label><textarea id="return-de-reason" placeholder="Describe what is missing or incorrect so Data Entry can correct it...">${esc((a && a.returnReason) || '')}</textarea></div>
+      <div class="actions-bar"><button class="btn btn-primary" onclick="CF.sendBackToDataEntry('${c.id}')"><i class="ti ti-send"></i> Confirm — Send Back to Data Entry</button></div>
     </div></div>`;
+    }
   }
 
   if (c.stage === 'Scanning') {
@@ -558,8 +700,10 @@ function renderCaseDetail(c) {
     <div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Design Check','Scan files uploaded — passed to Design team','Scanning Team')"><i class="ti ti-arrow-right"></i> Pass to Design Team</button></div></div>`;
   }
 
-  if (c.stage === 'Design Check') { const done = c.checklistDone || []; const all = done.length === DESIGN_CL.length; const hasReqs = (c.designReqs || []).filter(x => x && x.trim()).length > 0; const reqsOk = !hasReqs || c.reqsAck; const canSend = all && reqsOk; sp = `<div class="panel"><div class="panel-title"><i class="ti ti-list-check"></i> Design Readiness Checklist</div><div class="d-checklist">${DESIGN_CL.map((item, i) => `<div class="d-check-item${done.includes(i) ? ' checked' : ''}" onclick="CF.toggleCheck('${c.id}',${i})"><input type="checkbox" ${done.includes(i) ? 'checked' : ''}><label>${item}</label></div>`).join('')}</div><div class="divider"></div><div class="actions-bar"><button class="btn btn-sm" onclick="CF.exportZip('${c.id}')"><i class="ti ti-download"></i> Export Case ZIP</button>${canSend ? `<button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Outsourcing','Design checklist complete — sent to outsourcer','Design Team')"><i class="ti ti-send"></i> Send to Outsourcer</button>` : `<span style="font-size:12px;color:var(--color-text-secondary)">${!all ? 'Complete all checklist items to proceed' : 'Acknowledge the doctor requirements to proceed'}</span>`}</div></div>`; }
-  if (c.stage === 'Outsourcing') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-send"></i> Outsourcer Management</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Case ZIP sent. Upload returned design when ready.</div><div class="form-group" style="margin-bottom:14px"><label>Upload design from outsourcer</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload returned design file</div></div>${c.designFile ? `<div class="file-list"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(c.designFile.name)}</span><span class="file-size">${c.designFile.size}</span></div></div>` : ''}</div><div class="form-group" style="margin-bottom:14px"><label>Outsource notes</label><textarea id="outsource-notes" placeholder="Outsourcer, ETA, issues, anything QC should know..." onchange="CF.saveOutsourceNotes('${c.id}')">${esc(c.outsourceNotes || '')}</textarea></div><div class="actions-bar">${c.designFile ? `<button class="btn btn-primary" onclick="CF.beginQc('${c.id}')"><i class="ti ti-eye-check"></i> Begin QC</button>` : `<button class="btn btn-primary" onclick="CF.markDesignReceived('${c.id}')"><i class="ti ti-eye-check"></i> Mark design file received</button>`}</div></div>`; }
+  // Design Check: the readiness checklist was removed. The Export ZIP + actions now
+  // render in designActionsPanel(), appended AFTER the Design Checklist below.
+  if (c.stage === 'Design Check') { sp = ''; }
+  if (c.stage === 'Outsourcing') { const _partner = partnerOf(c); const _rel = r.qcReleaseAt; sp = `<div class="panel"><div class="panel-title"><i class="ti ti-send"></i> Outsourcer Management${_partner ? ` — ${OUTSOURCE_PARTNERS[_partner] || _partner}` : ''}</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Case ZIP sent${_partner ? ` to ${OUTSOURCE_PARTNERS[_partner] || _partner}` : ''}. ${_rel ? `Held here until <strong>${fmtTs(_rel)}</strong>, then auto-released to QC.` : 'Upload returned design when ready.'}</div><div class="form-group" style="margin-bottom:14px"><label>Upload design from outsourcer</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload returned design file</div></div>${c.designFile ? `<div class="file-list"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(c.designFile.name)}</span><span class="file-size">${c.designFile.size}</span></div></div>` : ''}</div><div class="form-group" style="margin-bottom:14px"><label>Outsource notes</label><textarea id="outsource-notes" placeholder="Outsourcer, ETA, issues, anything QC should know..." onchange="CF.saveOutsourceNotes('${c.id}')">${esc(c.outsourceNotes || '')}</textarea></div><div class="actions-bar">${c.designFile ? `<button class="btn btn-primary" onclick="CF.beginQc('${c.id}')"><i class="ti ti-eye-check"></i> Begin QC</button>` : `<button class="btn btn-primary" onclick="CF.markDesignReceived('${c.id}')"><i class="ti ti-eye-check"></i> Mark design file received</button>`}</div></div>`; }
   if (c.stage === 'QC') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-eye-check"></i> Quality Control</div><div class="alert alert-info"><i class="ti ti-info-circle"></i> Review the outsourcer's design.</div>${c.designFile ? `<div class="file-list" style="margin-bottom:14px"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(c.designFile.name)}</span><span class="file-size">${c.designFile.size}</span></div></div>` : ''}
     <label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:8px">QC decision</label><div class="qc-choice"><div class="qc-opt" id="qc-pass" onclick="CF.selectQC('pass')"><i class="ti ti-circle-check" style="color:#1B8A3E"></i><div class="opt-title">Pass QC</div></div><div class="qc-opt" id="qc-fail" onclick="CF.selectQC('fail')"><i class="ti ti-circle-x" style="color:#A0341A"></i><div class="opt-title">Fail QC</div></div></div>
     <div id="fail-options" style="display:none;margin-top:12px"><label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:6px">Who will make adjustments?</label><div class="sub-choice"><div class="sub-opt" id="adj-self" onclick="CF.selectAdj('self')"><i class="ti ti-tool"></i><span>In-house</span></div><div class="sub-opt" id="adj-resend" onclick="CF.selectAdj('resend')"><i class="ti ti-refresh"></i><span>Resend</span></div></div></div>
@@ -575,7 +719,11 @@ function renderCaseDetail(c) {
     // and the QC result once QC has been decided (rework/resend or Complete).
     const outsourceRO = designPhaseRank(c.stage) >= 2 ? outsourceSummaryPanel(c) : '';
     const qcRO = ['QC Failed - Rework', 'QC Failed - Resend', 'Complete'].includes(c.stage) ? qcSummaryPanel(c) : '';
-    sp = doctorReqsPanel(c) + reviewSummaryPanel(c) + outsourceRO + qcRO + sp + designChecklistPanel(c);
+    const designActions = c.stage === 'Design Check' ? designActionsPanel(c) : '';
+    // Case Review Selections + Doctor Requirements move to the LEFT column (next to
+    // the Design Checklist) so the design team can reference them while filling it out.
+    leftReviewSel = reviewSummaryPanel(c) + doctorReqsPanel(c);
+    sp = outsourceRO + qcRO + sp + designChecklistPanel(c) + designActions;
   }
   const genInfo = `<div class="panel"><div class="panel-title"><i class="ti ti-info-circle"></i> Case Info</div>
       <div class="info-row">
@@ -594,8 +742,9 @@ function renderCaseDetail(c) {
   return `${prog}<div class="two-col" style="gap:16px;align-items:start"><div>
     ${c.stage === 'Review' ? reviewInfoPanel : genInfo}
     <div class="panel"><div class="panel-title"><i class="ti ti-clock"></i> Activity</div>${tl}</div>
-    <div class="panel"><div class="panel-title"><i class="ti ti-file"></i> Entry files</div><div class="file-list">${fH}</div></div>
-    ${c.reviewFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-paperclip"></i> Design files</div><div class="file-list">${rfH}</div></div>` : ''}
+    <div class="panel"><div class="panel-title"><i class="ti ti-file"></i> Entry files</div><div class="file-list">${fH}</div>${isDesign && caseReviewFilesHtml ? `<div class="sec-label" style="margin-top:12px">From Case Review (scans &amp; files)</div><div class="file-list">${caseReviewFilesHtml}</div>` : ''}</div>
+    ${leftReviewSel}
+    ${(!isDesign && c.reviewFiles.length) ? `<div class="panel"><div class="panel-title"><i class="ti ti-paperclip"></i> Design files</div><div class="file-list">${rfH}</div></div>` : ''}
     ${c.scanFiles && c.scanFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#6B5E2F"></i> Scan files</div><div class="file-list">${sfH}</div></div>` : ''}
   </div><div>${sp}</div></div>`;
 }
@@ -604,22 +753,241 @@ function afterDetailRender(c) { qcSel = null; adjSel = null; }
 // ── transitions / actions (ported) ──────────────────────────────────
 function passToDesign(id) { saveReviewNotes(id); advanceStage(id, 'Design Check', 'Files reviewed — passed to Design team', 'Case Review Team'); }
 function passToScanning(id) { saveReviewNotes(id); advanceStage(id, 'Scanning', 'Passed to Scanning team', 'Case Review Team'); }
+
+// Case Review folder export: <case#>/ { scans/<review scan files>, Case Review
+// Checklist.txt, design notes.txt, <data entry files> }. File bytes are pulled
+// from Storage via signed URLs and packed into a single ZIP.
+function caseReviewChecklistText(c) {
+  const r = getR(c.id); const acct = r.acctType;
+  const L = ['CASE REVIEW CHECKLIST', 'Case: ' + (c.caseNum || c.id), 'Patient: ' + (c.patient || '—'), 'Doctor: ' + (c.doctor || '—'), ''];
+  L.push('Account type: ' + (acct === 'tri' ? 'TRI / Legacy Account' : acct === 'asp' ? 'ASPEN & ClearChoice' : '(not selected)'), '');
+  const pf = v => v === 'pass' ? 'Pass' : (v === 'fail' ? 'Fail' : '—');
+  if (acct === 'tri') {
+    // Scan/file listings are omitted (those files ship in the scans/ folder); the
+    // scan pass/fail review items are kept.
+    L.push('SCAN REVIEW');
+    SCAN_ITEMS.forEach((lbl, i) => L.push('  ' + lbl + ': ' + pf(r.scanItems && r.scanItems[i])));
+    if (r.predesigned) L.push('  Predesigned Case: Yes');
+    if (r.scanNotes) L.push('  Scan / files notes: ' + r.scanNotes);
+    L.push('', 'DESIGN NEEDS');
+    if (r.designNeeds != null && r.designNeeds !== undefined) L.push('  Design type: ' + (DESIGN_NEEDS_OPTS[r.designNeeds] || '—'));
+    if (r.drApproval === 'yes') L.push('  Doctor design approval: Yes — Required');
+  } else if (acct === 'asp') {
+    L.push('DESIGN REQUIREMENTS');
+    if (r.aspDesignReq != null && r.aspDesignReq !== undefined) { L.push('  Requirement: ' + (ASP_DESIGN_REQ[r.aspDesignReq] || '—')); if ((r.aspDesignReq === 1 || r.aspDesignReq === 2) && r.aspMouldName) L.push('  ' + (r.aspDesignReq === 1 ? 'Tooth mould' : 'Mould name') + ': ' + r.aspMouldName); }
+    // Design Specifics — only items answered "Yes" are listed.
+    const specYes = r.aspSpec ? ASP_SPEC_ITEMS.filter(it => r.aspSpec[it[0]] === 'yes') : [];
+    if (specYes.length) { L.push('', 'DESIGN SPECIFICS'); specYes.forEach(it => L.push('  ' + it[1] + ': Yes')); }
+    const lfx = r.aspSpec && r.aspSpec.lfx; const ccDig = r.aspSpec && r.aspSpec.ccDigital === 'yes';
+    // (Required Scans and Files section intentionally omitted — those files ship in the scans/ folder.)
+    if (lfx === 'no' && !ccDig && r.aspVerifiedModel) {
+      L.push('', 'VERIFIED MODEL: ' + (r.aspVerifiedModel === 'tibase' ? 'Ti Base' : 'Scan body'));
+      const opts = r.aspVerifiedModel === 'tibase' ? ASP_TIBASE_OPTS : ASP_SCANBODY_OPTS; const pfx = r.aspVerifiedModel === 'tibase' ? 'Ti' : 'Sb';
+      ['Upper', 'Lower'].forEach(side => { const sel = r['asp' + pfx + side]; if (sel != null && sel !== undefined) { let v = opts[sel]; const loc = r['asp' + pfx + side + 'Loc']; if (loc) v += ' (' + loc + ')'; L.push('  ' + side + ': ' + v); } });
+    }
+    if (lfx === 'no') { L.push('', 'FINAL SCREWS'); if (r.aspScrewCount) L.push('  Total screws: ' + r.aspScrewCount); if (r.aspScrewType != null && r.aspScrewType !== undefined) L.push('  Screw type: ' + (ASP_SCREW_OPTS[r.aspScrewType] || '—')); }
+  } else {
+    L.push('(No account type selected — no review selections to export.)');
+  }
+  return L.join('\n') + '\n';
+}
+// Build the Case Review folder entries: scans/<review scan files>, Case Review
+// Checklist.txt, design notes.txt, and the Data Entry files. Shared by the Case
+// Review export and the Design export (which adds design-specific artifacts).
+async function buildCaseReviewEntries(c, folder, opts) {
+  const includeDataEntryFiles = !opts || opts.includeDataEntryFiles !== false;
+  const r = getR(c.id);
+  const zipSafe = s => String(s || 'file').replace(/[\\/]/g, '_');
+  const entries = [];
+  const addFile = async (name, path) => { if (!path) return; try { const url = await Data.fileUrl(path); entries.push({ name, url }); } catch (e) { entries.push({ name, url: null }); } };
+  // scans/ — every Case Review scan/file upload except the design-return "missing info" box
+  if (r.aspFiles) { for (const key of Object.keys(r.aspFiles)) { if (key === 'missing_info') continue; for (const f of (r.aspFiles[key] || [])) await addFile(`${folder}/scans/${zipSafe(f.name)}`, f.path); } }
+  // Case Review Checklist (everything after the Rx & Work Ticket Review)
+  entries.push({ name: `${folder}/Case Review Checklist.txt`, text: caseReviewChecklistText(c) });
+  // design notes.txt — numbered doctor requirement notes
+  const reqs = (c.designReqs || []).filter(x => x && x.trim());
+  entries.push({ name: `${folder}/design notes.txt`, text: (reqs.length ? reqs.map((q, i) => `${i + 1}. ${q.trim()}`).join('\n') : '(no doctor requirement notes)') + '\n' });
+  // data entry files (uploaded during Data Entry) — omitted from the Design export
+  if (includeDataEntryFiles) { for (const f of (c.files || [])) await addFile(`${folder}/${zipSafe(f.name)}`, f.path); }
+  return entries;
+}
+function caseFolderName(c) { return String(c.caseNum || c.id || 'case').replace(/[^a-zA-Z0-9._-]/g, '_'); }
+async function exportCaseReviewZip(id) {
+  const c = getC(id); if (!c) return;
+  saveReviewNotes(id); // capture latest notes/selections before exporting
+  const folder = caseFolderName(c);
+  toast('Preparing ' + folder + '.zip…');
+  await buildAndDownloadZip(folder + '.zip', await buildCaseReviewEntries(c, folder), toast);
+}
+// Design export — the full Case Review folder PLUS design-specific artifacts
+// (filled design checklist PDF + a case summary).
+async function exportDesignZip(id) {
+  const c = getC(id); if (!c) return;
+  saveDclTexts(id); // capture design checklist edits before exporting
+  const folder = caseFolderName(c);
+  const entries = await buildCaseReviewEntries(c, folder, { includeDataEntryFiles: false });
+  try { const pdf = await fillDesignPdf(c); if (pdf) entries.push({ name: `${folder}/design_checklist_${c.dclType || 'NA'}_${folder}.pdf`, bytes: pdf }); } catch (e) {}
+  toast('Preparing ' + folder + '.zip…');
+  await buildAndDownloadZip(folder + '.zip', entries, toast);
+}
 function showCoordReason() { const b = document.getElementById('coord-reason-block'); if (b) b.style.display = 'block'; }
 function sendToCoordination(id) { const c = getC(id); if (!c) return; saveReviewNotes(id); const ta = document.getElementById('coord-reason'); c.coordReason = ta ? ta.value.trim() : ''; advanceStage(id, 'Case Coordination', 'Placed on hold — sent to Case Coordination' + (c.coordReason ? ': ' + c.coordReason : ''), 'Case Review Team'); }
+function showReturnReason() { const b = document.getElementById('return-de-block'); if (b) b.style.display = 'block'; }
+function sendBackToDataEntry(id) {
+  const c = getC(id); if (!c) return; saveReviewNotes(id);
+  const ta = document.getElementById('return-de-reason'); const reason = ta ? ta.value.trim() : '';
+  const a = getA(id); a.returnedFromReview = true; a.returnReason = reason;
+  c.deHold = null; c.stage = 'Data Entry';
+  cfEvent(c, 'Placed on hold — sent back to Data Entry for missing/incorrect information' + (reason ? ': ' + reason : ''), 'Case Review Team');
+  cfSave(c);
+  toast('Sent back to Data Entry for missing information');
+  goBack('casereview'); // leaves the Case Review queue (now a Data Entry case)
+}
+
+// ── Design → Case Review return + the Case Review bucket actions ──────
+function designActionsPanel(c) {
+  const route = designRouteOf(c);
+  if (route) {
+    const label = route === 'bar' ? 'Bar Design' : (route === 'vjig' ? 'Design VJig/Custom Tray' : 'Milling');
+    return `<div class="panel"><div class="panel-title"><i class="ti ti-route"></i> ${label}</div>
+      <div class="alert alert-info" style="margin:0 0 10px"><i class="ti ti-info-circle"></i> This case has been sent to <strong>${label}</strong>.</div>
+      <div class="actions-bar"><button class="btn btn-sm" onclick="CF.exportDesignZip('${c.id}')"><i class="ti ti-download"></i> Export Case ZIP</button><button class="btn" onclick="CF.clearDesignRoute('${c.id}')"><i class="ti ti-arrow-back-up"></i> Return to Design queue</button></div></div>`;
+  }
+  return `<div class="panel"><div class="panel-title"><i class="ti ti-send"></i> Design Actions</div>
+    <div class="actions-bar">
+      <button class="btn btn-sm btn-primary" onclick="CF.exportDesignZip('${c.id}');CF.showDesignRouting()"><i class="ti ti-download"></i> Export Case ZIP</button>
+      <button class="btn" onclick="CF.showDesignReturn()"><i class="ti ti-arrow-back-up"></i> Send back to Case Review for missing information/clarification needed</button>
+    </div>
+    <div id="design-return-block" style="display:none;margin-top:12px">
+      <div class="form-group"><label>Why are you sending this back to Case Review?</label><textarea id="design-return-reason" placeholder="Describe the missing information or clarification needed..."></textarea></div>
+      <div class="actions-bar"><button class="btn btn-primary" onclick="CF.sendBackToCaseReview('${c.id}')"><i class="ti ti-send"></i> Confirm — Send back to Case Review</button></div>
+    </div>
+    <div id="design-routing-block" style="display:none;margin-top:12px">
+      <span class="sec-label" style="margin-top:0">Route this case</span>
+      <div class="actions-bar">
+        <button class="btn btn-primary" onclick="CF.showOutsourcePartners()"><i class="ti ti-external-link"></i> Send to Outsource</button>
+        <button class="btn" onclick="CF.routeDesign('${c.id}','bar')"><i class="ti ti-rectangle"></i> Send to Bar Design</button>
+        <button class="btn" onclick="CF.routeDesign('${c.id}','vjig')"><i class="ti ti-dental"></i> Send to Design Verification Jig/Custom Tray</button>
+        <button class="btn" onclick="CF.routeDesign('${c.id}','milling')"><i class="ti ti-tools"></i> Send to Milling</button>
+      </div>
+      <div id="outsource-partners" style="display:none;margin-top:10px">
+        <span class="sec-label" style="margin-top:0">Choose outsource partner</span>
+        <div class="actions-bar">
+          <button class="btn" onclick="CF.sendToOutsource('${c.id}','adite')">Send to Adite</button>
+          <button class="btn" onclick="CF.sendToOutsource('${c.id}','heygears')">Send to HeyGears</button>
+          <button class="btn" onclick="CF.sendToOutsource('${c.id}','cadora')">Send to Cadora</button>
+        </div>
+      </div>
+    </div></div>`;
+}
+function showDesignReturn() { const b = document.getElementById('design-return-block'); if (b) b.style.display = 'block'; }
+function showDesignRouting() { const b = document.getElementById('design-routing-block'); if (b) b.style.display = 'block'; }
+function showOutsourcePartners() { const b = document.getElementById('outsource-partners'); if (b) b.style.display = 'block'; }
+function routeDesign(id, route) {
+  const c = getC(id); if (!c) return;
+  const r = getR(id); r.designRoute = route; r.outsourcePartner = null;
+  const label = route === 'bar' ? 'Bar Design' : (route === 'vjig' ? 'Design VJig/Custom Tray' : 'Milling');
+  cfEvent(c, 'Routed to ' + label, 'Design Team'); cfSave(c); // stage stays 'Design Check'
+  toast('Sent to ' + label); goBack('design');
+}
+// Outsourced cases are held in the Outsource tab until 4:00am the following day,
+// then auto-released to QC. Compute that release moment (local time).
+function nextQcReleaseISO(fromISO) {
+  const base = fromISO ? new Date(fromISO) : new Date();
+  return new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1, 4, 0, 0, 0).toISOString();
+}
+// Sweep: move any Outsourcing case whose 4am hold has elapsed into QC. Runs on
+// load and on a timer (so it fires if the app is open at 4am), and is idempotent.
+function releaseOutsourcedToQc() {
+  if (!loaded) return 0;
+  const now = Date.now(); let moved = 0;
+  for (const c of cases) {
+    if (c.stage !== 'Outsourcing') continue;
+    const rel = c.aoxReview && c.aoxReview.qcReleaseAt;
+    if (rel && now >= new Date(rel).getTime()) { c.stage = 'QC'; cfEvent(c, 'Auto-released to QC (overnight outsource hold elapsed)', 'System'); cfSave(c); moved++; }
+  }
+  if (moved && selectedMode === 'design' && !selectedCaseId) renderMode('design');
+  return moved;
+}
+function sendToOutsource(id, partner) {
+  const c = getC(id); if (!c) return;
+  const r = getR(id); r.outsourcePartner = partner; r.designRoute = null;
+  r.outsourcedAt = new Date().toISOString();
+  r.qcReleaseAt = nextQcReleaseISO(r.outsourcedAt);
+  c.stage = 'Outsourcing';
+  cfEvent(c, 'Sent to outsource partner: ' + (OUTSOURCE_PARTNERS[partner] || partner) + ' — holds until ' + fmtTs(r.qcReleaseAt), 'Design Team'); cfSave(c);
+  toast('Sent to ' + (OUTSOURCE_PARTNERS[partner] || partner)); goBack('design');
+}
+function clearDesignRoute(id) {
+  const c = getC(id); if (!c) return; const r = getR(id); r.designRoute = null;
+  cfEvent(c, 'Returned to Design queue', 'Design Team'); cfSave(c);
+  toast('Returned to Design queue'); goBack('design');
+}
+function sendBackToCaseReview(id) {
+  const c = getC(id); if (!c) return; saveDclTexts(id);
+  const ta = document.getElementById('design-return-reason'); const reason = ta ? ta.value.trim() : '';
+  const r = getR(id); r.crBucket = 'design_return'; r.designReturnReason = reason;
+  c.stage = 'Review';
+  cfEvent(c, 'Sent back to Case Review from Design — missing info/clarification needed' + (reason ? ': ' + reason : ''), 'Design Team');
+  cfSave(c);
+  toast('Sent back to Case Review');
+  goBack('design');
+}
+// Missing-info uploads use a dedicated path (the editable review checklist isn't on
+// screen in this view, so rebuildAoxReview would no-op — persist + re-render here).
+function crMissingPick(id) { pickFiles(async files => { await uploadCrFiles(id, 'missing_info', files); }); }
+async function crMissingDrop(ev, id) { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.remove('drag-over'); const fl = ev.dataTransfer && ev.dataTransfer.files; if (fl && fl.length) await uploadCrFiles(id, 'missing_info', Array.from(fl)); }
+async function uploadCrFiles(id, key, files) {
+  const c = getC(id); const r = getR(id); if (!r.aspFiles) r.aspFiles = {}; if (!r.aspFiles[key]) r.aspFiles[key] = [];
+  for (const f of files) { try { const meta = await Data.uploadFile(c, 'review', f, key); r.aspFiles[key].push({ name: meta.name, size: meta.size, path: meta.path }); } catch (e) { toast('Upload failed: ' + e.message); } }
+  cfSave(c); if (selectedMode) renderMode(selectedMode); toast('File(s) attached');
+}
+function crMissingRemove(id, idx) { const r = getR(id); if (r.aspFiles && r.aspFiles.missing_info) { r.aspFiles.missing_info.splice(idx, 1); cfSave(getC(id)); if (selectedMode) renderMode(selectedMode); } }
+function saveCrFields(id) { const r = getR(id); const cl = document.getElementById('cr-clarification'); if (cl) r.crClarification = cl.value; const tn = document.getElementById('cr-ta-notes'); if (tn) r.taNotes = tn.value; cfSave(getC(id)); }
+function crSendToDesign(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; c.stage = 'Design Check'; cfEvent(c, 'Returned to Design with new files/clarification' + (r.crClarification ? ': ' + r.crClarification : ''), 'Case Review Team'); cfSave(c); toast('Sent back to Design'); goBack('casereview'); }
+function crHoldMissing(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = 'hold_missing'; c.stage = 'Review'; cfEvent(c, 'Placed on hold for missing information', 'Case Review Team'); cfSave(c); toast('Placed on hold for missing information'); goBack('casereview'); }
+function showTaNotes() { const b = document.getElementById('ta-notes-block'); if (b) b.style.display = 'block'; }
+function crEscalateTa(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); const ta = document.getElementById('cr-ta-notes'); r.taNotes = ta ? ta.value.trim() : (r.taNotes || ''); r.crBucket = 'ta'; c.stage = 'Review'; cfEvent(c, 'Escalated to Technical Advisor' + (r.taNotes ? ': ' + r.taNotes : ''), 'Case Review Team'); cfSave(c); toast('Escalated to Technical Advisor'); goBack('casereview'); }
+function crPassToScanning(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; c.stage = 'Scanning'; cfEvent(c, 'Passed to Scanning team', 'Case Review Team'); cfSave(c); toast('Passed to Scanning'); goBack('casereview'); }
+function fileExt(name) { const m = /\.([a-z0-9]+)$/i.exec(String(name || '')); return m ? m[1].toLowerCase() : ''; }
+// .stl -> 3Shape, .cad -> exocad: download with the real filename so the Windows
+// file-association opens it in the desktop CAD app. Everything else previews in a tab.
+function openByType(name, url) {
+  const ext = fileExt(name);
+  if (ext === 'stl' || ext === 'cad') {
+    const sep = url.indexOf('?') > -1 ? '&' : '?';
+    const dl = url + sep + 'download=' + encodeURIComponent(name); // Supabase signed-URL attachment
+    const a = document.createElement('a'); a.href = dl; a.download = name; a.style.display = 'none';
+    document.body.appendChild(a); a.click(); setTimeout(() => { try { document.body.removeChild(a); } catch (e) {} }, 0);
+    toast('Downloading ' + name + ' — opens in ' + (ext === 'stl' ? '3Shape' : 'exocad'));
+    return;
+  }
+  window.open(url, '_blank', 'noopener');
+}
+async function previewFile(id, kind, idx, key) {
+  const c = getC(id); if (!c) return;
+  let f;
+  if (kind === 'asp') { const r = getR(id); f = r.aspFiles && r.aspFiles[key] && r.aspFiles[key][idx]; }
+  else { const arr = kind === 'review' ? c.reviewFiles : (kind === 'scan' ? c.scanFiles : c.files); f = arr && arr[idx]; }
+  if (!f) return;
+  if (!f.path) { toast('No stored file to open for this entry'); return; }
+  try { const url = await Data.fileUrl(f.path); if (url) openByType(f.name, url); }
+  catch (e) { toast('Open failed: ' + e.message); }
+}
 function selectQC(val) { qcSel = val; document.getElementById('qc-pass').className = 'qc-opt' + (val === 'pass' ? ' selected' : ''); document.getElementById('qc-fail').className = 'qc-opt' + (val === 'fail' ? ' selected-red' : ''); document.getElementById('fail-options').style.display = val === 'fail' ? 'block' : 'none'; if (val === 'pass') { adjSel = null; document.getElementById('qc-actions').innerHTML = `<button class="btn btn-primary" onclick="CF.submitQC()"><i class="ti ti-check"></i> Confirm QC Pass — Mark Complete</button>`; } else document.getElementById('qc-actions').innerHTML = ''; }
 function selectAdj(val) { adjSel = val; document.getElementById('adj-self').className = 'sub-opt' + (val === 'self' ? ' selected' : ''); document.getElementById('adj-resend').className = 'sub-opt' + (val === 'resend' ? ' selected' : ''); document.getElementById('qc-actions').innerHTML = `<button class="btn btn-primary btn-danger" onclick="CF.submitQC()"><i class="ti ti-x"></i> ${val === 'self' ? 'Assign In-House Rework' : 'Resend to Outsourcer'}</button>`; }
 function submitQC() { const c = getC(selectedCaseId); if (!c) return; const notesEl = document.getElementById('qc-notes'); if (notesEl) c.qcNotes = notesEl.value; if (qcSel === 'pass') advanceStage(c.id, 'Complete', 'QC passed — case complete', 'Design Team (QC)'); else if (adjSel === 'self') advanceStage(c.id, 'QC Failed - Rework', 'QC failed — in-house rework assigned', 'Design Team (QC)'); else if (adjSel === 'resend') advanceStage(c.id, 'QC Failed - Resend', 'QC failed — resent to outsourcer', 'Design Team (QC)'); }
 function toggleCheck(id, idx) { const c = getC(id); if (!c) return; if (!c.checklistDone) c.checklistDone = []; const i = c.checklistDone.indexOf(idx); if (i > -1) c.checklistDone.splice(i, 1); else c.checklistDone.push(idx); cfSave(c); if (selectedMode) renderMode(selectedMode); }
 function toggleDeRush(id) { const c = getC(id); if (!c) return; c.rush = !c.rush; const row = document.getElementById('de-rush-row'); const cb = document.getElementById('de-rush'); if (row) row.className = 'rush-row' + (c.rush ? ' rush-active' : ''); if (cb) cb.checked = c.rush; cfSave(c); }
 function saveDeFields(id) { const c = getC(id); if (!c) return; saveAoxText(id); const g = k => document.getElementById(k); const p = g('de-patient'); if (p) c.patient = p.value; const dr = g('de-doctor'); if (dr) c.doctor = dr.value; const dd = g('de-drdue'); if (dd) c.drDueDate = dd.value; const nt = g('de-notes'); if (nt) c.notes = nt.value; const cn = g('de-casenum'); if (cn) c.caseNum = cn.value; const sd = g('de-shipdate'); if (sd) c.shipDate = sd.value; }
-function submitDataEntry(id) { saveDeFields(id); const c = getC(id); if (c) c.deHold = null; advanceStage(id, 'Review', 'Data submitted and sent to review', 'Data Entry Team'); }
+function submitDataEntry(id) { saveDeFields(id); const c = getC(id); if (c) { c.deHold = null; const a = getA(id); a.returnedFromReview = false; a.returnReason = ''; } advanceStage(id, 'Review', 'Data submitted and sent to review', 'Data Entry Team'); }
 function holdDataEntry(id, type) { saveDeFields(id); const c = getC(id); if (!c) return; c.deHold = type; const msg = type === 'models' ? 'Placed on hold — waiting for physical models' : 'Placed on hold — waiting for missing information'; cfEvent(c, msg, 'Data Entry Team'); cfSave(c); if (selectedMode) renderMode(selectedMode); toast(msg); }
 function saveOutsourceNotes(id) { const c = getC(id); if (!c) return; const el = document.getElementById('outsource-notes'); if (el) { c.outsourceNotes = el.value; cfSave(c); } }
 function beginQc(id) { saveOutsourceNotes(id); advanceStage(id, 'QC', 'Design received — ready for QC', 'Design Team'); }
 function markDesignReceived(id) { saveOutsourceNotes(id); advanceStage(id, 'QC', 'Design file received — ready for QC', 'Design Team'); }
 
 // ── real file upload (replaces fakeUpload) ──────────────────────────
-function pickFiles(cb) { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.style.display = 'none'; document.body.appendChild(inp); inp.onchange = () => { const files = Array.from(inp.files || []); document.body.removeChild(inp); if (files.length) cb(files); }; inp.click(); }
+function pickFiles(cb, accept) { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; if (accept) inp.accept = accept; inp.style.display = 'none'; document.body.appendChild(inp); inp.onchange = () => { const files = Array.from(inp.files || []); document.body.removeChild(inp); if (files.length) cb(files); }; inp.click(); }
 function pick(kind) {
   const c = getC(selectedCaseId); if (!c) return;
   pickFiles(async files => {
@@ -670,6 +1038,9 @@ let _aoxListenerAttached = false;
 export function initCaseFlow() {
   if (_aoxListenerAttached) return;
   _aoxListenerAttached = true;
+  // Check once a minute whether any outsourced case has passed its 4am hold so it
+  // moves to QC even while the app stays open overnight.
+  setInterval(releaseOutsourcedToQc, 60000);
   // Delegated AOX (Data Entry checklist) click handler — one global, matches the
   // prototype. Only one detail is ever open, so #aox-panel is unique.
   document.addEventListener('click', function (e) {
@@ -682,20 +1053,28 @@ export function initCaseFlow() {
     const optRow = e.target.closest('[data-aox-field][data-aox-val]');
     if (optRow) { const field = optRow.dataset.aoxField, val = parseInt(optRow.dataset.aoxVal, 10); const stateKey = FIELD_MAP[field] || field; (RESET_MAP[stateKey] || []).forEach(k => a[k] = null); a[stateKey] = val; rebuildAox(caseId); return; }
     const tog = e.target.closest('[data-aox-toggle]');
-    if (tog) { const t = tog.dataset.aoxToggle; a[t] = !a[t]; if (t === 'addon' && !a[t]) a.addonSel = null; rebuildAox(caseId); }
+    if (tog) { const t = tog.dataset.aoxToggle; a[t] = !a[t]; if (t === 'addon' && !a[t]) { a.addonDenture = false; a.addonNightguard = false; } if (t === 'addonMfg' && !a[t]) a.addonMfgSel = null; rebuildAox(caseId); }
   });
 }
 
 const CF = {
-  openCase, goBack, setDeTab, setDesignTab, advanceStage,
+  openCase, goBack, setDeTab, setDesignTab, setCrTab, advanceStage, filterQueue,
   saveOutsourceNotes, beginQc,
   // review checklist
   setAcctType, setAspDesignReq, setAspSpec, setAspVerifiedModel, setAspArch, setAspScrewType, setAspScrewCount,
-  aspDragOver, aspDragLeave, aspDrop, aspPick, aspRemoveFile, setPF, setDesignNeeds, setDrApproval, saveReviewNotes,
+  aspDragOver, aspDragLeave, aspDrop, aspPick, aspRemoveFile, setPF, setDesignNeeds, setDrApproval, saveReviewNotes, togglePredesigned,
   // doctor reqs
   saveDesignReqs, addDesignReq, removeDesignReq, toggleReqsAck,
   // review transitions
-  passToDesign, passToScanning, showCoordReason, sendToCoordination,
+  passToDesign, passToScanning, showCoordReason, sendToCoordination, showReturnReason, sendBackToDataEntry,
+  exportCaseReviewZip,
+  // design → case review return + case review bucket actions
+  showDesignReturn, sendBackToCaseReview, crMissingPick, crMissingDrop, crMissingRemove, saveCrFields,
+  crSendToDesign, crHoldMissing, showTaNotes, crEscalateTa, crPassToScanning,
+  // design routing (outsource partners / bar / vjig / milling)
+  showDesignRouting, showOutsourcePartners, routeDesign, sendToOutsource, clearDesignRoute, exportDesignZip, setQcPartner,
+  // file preview (signed URL)
+  previewFile,
   // design checklist
   setDclType, toggleDcl, setDclVal, setDclText,
   // QC + design

@@ -132,6 +132,22 @@ export async function uploadFile(c, kind, file, section) {
   return { name: file.name, size: fmtSize(file.size), path, by: currentUser() };
 }
 
+// Sign a private-bucket object path for in-browser preview/download. Returns a
+// short-lived absolute URL (the bucket is private — no public URLs).
+export async function fileUrl(path, expiresIn) {
+  if (!path) return null;
+  const c = cfg();
+  if (!c.key) throw new Error('Supabase is not configured (set the publishable key in Settings).');
+  const resp = await fetch(c.url + '/storage/v1/object/sign/' + BUCKET + '/' + path, {
+    method: 'POST',
+    headers: headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ expiresIn: expiresIn || 3600 }),
+  });
+  if (!resp.ok) { const t = await resp.text(); throw new Error('HTTP ' + resp.status + ': ' + t); }
+  const d = await resp.json();
+  return c.url + '/storage/v1' + d.signedURL; // signedURL is bucket-relative, starts with /object/sign/...
+}
+
 export function fmtSize(b) {
   if (b == null) return '';
   if (b < 1024) return b + ' B';
