@@ -1,0 +1,122 @@
+/* Quality Control mode — styles scoped to .qc-root, reusing the suite's theme
+   tokens (--navy / --blue / --slate / --red, etc. from index.html :root) so the
+   mode matches Case Coordination / Design Approvals. */
+
+.qc-root { font-family: 'Montserrat', sans-serif; color: var(--charcoal); }
+
+/* Segmented sub-tab toggle (QC Reject / Internal Remake) */
+.qc-header { margin-bottom: 18px; }
+.qc-seg {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--bg);
+  border: 1px solid var(--slate-light);
+  border-radius: 12px;
+  padding: 4px;
+}
+.qc-segtab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  padding: 9px 18px;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.qc-segtab.active { background: var(--white); box-shadow: 0 1px 4px rgba(5, 32, 48, 0.12); }
+.qc-segtab-label { font-size: 14px; font-weight: 700; color: var(--slate); }
+.qc-segtab-sub { font-size: 11px; color: var(--silver); }
+.qc-segtab.active .qc-segtab-label { color: var(--navy); }
+.qc-segtab.active .qc-segtab-sub { color: var(--slate); }
+
+/* Step dots */
+.qc-dots { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 14px; }
+.qc-dot { width: 8px; height: 8px; border-radius: 4px; background: var(--slate-light); transition: all 0.2s; }
+.qc-dot.active { width: 24px; background: var(--blue); }
+.qc-dot.done { background: var(--blue-soft); }
+
+/* Case summary chip on step 2 */
+.qc-summary {
+  background: var(--bg);
+  border: 1px solid var(--slate-light);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--slate);
+  margin-bottom: 16px;
+}
+
+/* Urgency pills */
+.qc-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.qc-pill {
+  border: none;
+  background: var(--bg);
+  color: var(--slate);
+  border-radius: 99px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qc-pill.active { font-weight: 700; }
+
+/* Yes/No expert grid (Internal Remake) */
+.qc-yn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.qc-yn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg);
+  border: 1.5px solid var(--slate-light);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qc-yn-label { font-size: 18px; font-weight: 700; color: var(--slate); }
+.qc-yn-sub { font-size: 12px; color: var(--silver); }
+.qc-yn.active-purple { background: #EEEDFE; border-color: #534AB7; }
+.qc-yn.active-purple .qc-yn-label, .qc-yn.active-purple .qc-yn-sub { color: #534AB7; }
+.qc-yn.active-green { background: #EAF3DE; border-color: #97C459; }
+.qc-yn.active-green .qc-yn-label, .qc-yn.active-green .qc-yn-sub { color: #3B6D11; }
+
+/* Confirmation note boxes */
+.qc-note {
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+.qc-note-purple { background: #EEEDFE; border: 1.5px solid #534AB7; color: #3a338f; }
+.qc-note-green { background: #EAF3DE; border: 1.5px solid #97C459; color: #2f570e; }
+
+/* Action button row */
+.qc-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
+.qc-actions .act { min-width: 120px; justify-content: center; }
+
+/* Form helpers */
+.qc-root .cc-form-card label .muted { font-weight: 400; color: var(--silver); letter-spacing: 0; text-transform: none; }
+
+/* Recent rejects table */
+.qc-recent { margin-top: 28px; }
+.qc-recent-head {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--slate);
+  margin-bottom: 10px;
+}
+
+/* Urgency badge variants for the recent table (.cc-action-badge .qc-*) */
+.cc-action-badge.qc-repair   { background: #EAF3DE; color: #3B6D11; border-color: #97C459; }
+.cc-action-badge.qc-asap     { background: #FAEEDA; color: #854F0B; border-color: #EF9F27; }
+.cc-action-badge.qc-nextday  { background: #E6F1FB; color: #185FA5; border-color: #85B7EB; }
+.cc-action-badge.qc-remake   { background: #FCEBEB; color: #A32D2D; border-color: #F09595; }
+.cc-action-badge.qc-internal { background: #EEEDFE; color: #534AB7; border-color: #AFA9EC; }

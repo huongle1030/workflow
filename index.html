@@ -3305,6 +3305,14 @@
         </div>
         <span id="check-design" class="check" style="display:none;">✓</span>
       </div>
+      <div class="app-item" data-mode="qc" onclick="switchMode('qc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark cc"></div>
+        <div class="app-info">
+          <span class="name">Quality Control</span>
+          <span class="desc">Log QC rejects & internal remakes</span>
+        </div>
+        <span id="check-qc" class="check" style="display:none;">✓</span>
+      </div>
     </div>
   </div>
   <div class="appbar-right">
@@ -3396,6 +3404,7 @@
 <div class="tabs hidden" id="tabs-casereview"><div class="tab active">Case Review</div></div>
 <div class="tabs hidden" id="tabs-scanning"><div class="tab active">Scanning</div></div>
 <div class="tabs hidden" id="tabs-design"><div class="tab active">Design Team</div></div>
+<div class="tabs hidden" id="tabs-qc"><div class="tab active">Quality Control</div></div>
 
 <div class="global-search-row" id="global-search-row">
   <div class="global-search" id="global-search-wrap">
@@ -3960,6 +3969,7 @@ Clean margins are needed before we can proceed with the design"></textarea>
 <div class="hidden" id="panel-casereview"></div>
 <div class="hidden" id="panel-scanning"></div>
 <div class="hidden" id="panel-design"></div>
+<div class="hidden" id="panel-qc"></div>
 
 <!-- CaseFlow New Case modal (scoped under .cf-root styling) -->
 <div class="cf-modal-overlay" id="cf-new-case-modal" role="dialog" aria-modal="true">

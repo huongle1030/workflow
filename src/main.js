@@ -8,6 +8,9 @@ import { can, CAPABILITIES, getCurrentRole, ROLE_LABELS, ROLES } from './permiss
 // Importing for side effects: sets window.CF and bundles the caseflow module + CSS.
 import { initCaseFlow } from './caseflow/app.js';
 initCaseFlow();
+// Quality Control mode (Log QC Reject + Internal Remake). Importing for side
+// effects: sets window.QCMODE. See PRD_quality_control_mode.md.
+import './qc/app.js';
 
 // Coordinator-uploaded PDF attachments, keyed by attempt_id. Populated in loadOutbound()
 // (bulk read of dr_outreach_attempt_attachments) and rendered as chips + a drop zone on
@@ -2686,15 +2689,18 @@ const OUTREACH_PANELS = ['outbound','approval','ready','inbound','audit','lookup
 const CC_PANELS       = ['cc-dashboard','cc-newlog','cc-history','cc-tracker','cc-coordinators','cc-prefs'];
 // CaseFlow production modes — each is a single panel (id `panel-<mode>`) rendered
 // by src/caseflow/app.js. See PRD_caseflow_4_modes.md.
-const CASEFLOW_PANELS = ['dataentry','casereview','scanning','design'];
+// `qc` is a single panel (id `panel-qc`) rendered by src/qc/app.js (Quality
+// Control: Log QC Reject + Internal Remake). See PRD_quality_control_mode.md.
+const CASEFLOW_PANELS = ['dataentry','casereview','scanning','design','qc'];
 const CASEFLOW_MODES = {
   dataentry:  { tabs: 'tabs-dataentry',  name: 'Data Entry',  sub: 'Enter case info + AOX checklist, route to review' },
   casereview: { tabs: 'tabs-casereview', name: 'Case Review', sub: 'AOX review checklist + route to design/scanning' },
   scanning:   { tabs: 'tabs-scanning',   name: 'Scanning',    sub: 'Upload scan files, pass to the design team' },
   design:     { tabs: 'tabs-design',     name: 'Design Team', sub: 'Design checklist, QC, outsourcing, ZIP export' },
+  qc:         { tabs: 'tabs-qc',         name: 'Quality Control', sub: 'Log QC rejects & internal remakes' },
 };
-const ALL_MODE_TABROWS = ['tabs-outreach','tabs-cc','tabs-dataentry','tabs-casereview','tabs-scanning','tabs-design'];
-const ALL_MODE_CHECKS  = ['check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design'];
+const ALL_MODE_TABROWS = ['tabs-outreach','tabs-cc','tabs-dataentry','tabs-casereview','tabs-scanning','tabs-design','tabs-qc'];
+const ALL_MODE_CHECKS  = ['check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design','check-qc'];
 
 // Mode (brand-switcher app) -> capability that gates it. Outreach and Case
 // Coordination are whole apps; the four CaseFlow modes each have their own cap.
@@ -2706,9 +2712,10 @@ const MODE_CAP = {
   casereview: CAPABILITIES.CASEFLOW_REVIEW,
   scanning:   CAPABILITIES.CASEFLOW_SCAN,
   design:     CAPABILITIES.CASEFLOW_DESIGN,
+  qc:         CAPABILITIES.CASEFLOW_QC,
 };
 // Brand-switcher display order — also the search order for a role's landing mode.
-const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design'];
+const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design','qc'];
 
 // True if the current role may enter this mode.
 function isModePermitted(mode) {
@@ -2764,7 +2771,12 @@ function switchMode(mode) {
     document.getElementById('panel-' + mode).classList.remove('hidden');
     document.querySelector('.brand-text .name').textContent = cf.name;
     document.querySelector('.brand-text .sub').textContent = cf.sub;
-    if (window.CF && window.CF.renderCaseFlowMode) window.CF.renderCaseFlowMode(mode);
+    // Quality Control is its own module (src/qc/app.js), not a CaseFlow queue.
+    if (mode === 'qc') {
+      if (window.QCMODE && window.QCMODE.renderQcMode) window.QCMODE.renderQcMode();
+    } else if (window.CF && window.CF.renderCaseFlowMode) {
+      window.CF.renderCaseFlowMode(mode);
+    }
   }
   // The KPI strip + search bar are scoped to the outreach app.
   const kpiStrip = document.getElementById('kpi-strip');
