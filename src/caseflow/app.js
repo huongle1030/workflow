@@ -168,20 +168,20 @@ function buildAoxReviewChecklist(caseId) {
   function reviewSections() {
     return `
       <div class="aox-section">
-        <div class="aox-section-title"><i class="ti ti-file-description" style="font-size:13px;color:#185FA5"></i> Rx and Work Ticket Review</div>
+        <div class="aox-section-title"><i class="ti ti-file-description" style="font-size:13px;color:#136AA3"></i> Rx and Work Ticket Review</div>
         <div class="aox-subsection"><div class="aox-subsection-title">Basic Info Check</div>${BASIC_INFO_ITEMS.map((lbl, i) => pfRow('basicInfo', i, lbl)).join('')}</div>
         <div class="aox-subsection"><div class="aox-subsection-title">Product &amp; Workflow Confirmation</div>${PRODUCT_ITEMS.map((lbl, i) => pfRow('productInfo', i, lbl)).join('')}</div>
         <div class="form-group" style="margin-top:12px"><label>Rx &amp; Work Ticket Notes</label><textarea id="rx-notes" placeholder="Add notes here..." onchange="CF.saveReviewNotes('${caseId}')">${esc(r.rxNotes || '')}</textarea></div>
       </div>
       <div class="aox-section">
-        <div class="aox-section-title"><i class="ti ti-scan" style="font-size:13px;color:#534AB7"></i> Scan and Files</div>
+        <div class="aox-section-title"><i class="ti ti-scan" style="font-size:13px;color:#6B5E2F"></i> Scan and Files</div>
         ${SCAN_ITEMS.map((lbl, i) => pfRow('scanItems', i, lbl)).join('')}
         <span class="sec-label">Attach scan files</span>
         ${TRI_SCAN_SECTIONS.map(n => fileDrop(n)).join('')}
         <div class="form-group" style="margin-top:12px"><label>Scans / Files Notes</label><textarea id="scan-notes" placeholder="Add notes here..." onchange="CF.saveReviewNotes('${caseId}')">${esc(r.scanNotes || '')}</textarea></div>
       </div>
       <div class="aox-section">
-        <div class="aox-section-title"><i class="ti ti-palette" style="font-size:13px;color:#993556"></i> Design Needs</div>
+        <div class="aox-section-title"><i class="ti ti-palette" style="font-size:13px;color:#0A2C42"></i> Design Needs</div>
         <span class="sec-label" style="margin-top:0">Select design type</span>
         <div class="design-needs-grid">${DESIGN_NEEDS_OPTS.map((lbl, i) => `<button class="dn-btn${r.designNeeds === i ? ' active' : ''}" onclick="CF.setDesignNeeds('${caseId}',${i})">${lbl}</button>`).join('')}</div>
         <span class="sec-label">Doctor Design Approval Needed?</span>
@@ -201,23 +201,23 @@ function buildAoxReviewChecklist(caseId) {
     const specRow = (key, lbl) => `<div class="pf-row"><span class="pf-label">${lbl}</span><div class="pf-btns"><button class="pf-btn${spec[key] === 'yes' ? ' pass' : ''}" onclick="CF.setAspSpec('${caseId}','${key}','yes')">Yes</button><button class="pf-btn${spec[key] === 'no' ? ' fail' : ''}" onclick="CF.setAspSpec('${caseId}','${key}','no')">No</button></div></div>`;
     const rxSection = `
       <div class="aox-section">
-        <div class="aox-section-title"><i class="ti ti-file-description" style="font-size:13px;color:#185FA5"></i> Rx and Work Ticket Review</div>
+        <div class="aox-section-title"><i class="ti ti-file-description" style="font-size:13px;color:#136AA3"></i> Rx and Work Ticket Review</div>
         <div class="aox-subsection"><div class="aox-subsection-title">Basic Info Check</div>${BASIC_INFO_ITEMS.map((lbl, i) => pfRow('basicInfo', i, lbl)).join('')}</div>
         <div class="aox-subsection"><div class="aox-subsection-title">Product &amp; Workflow Confirmation</div>${PRODUCT_ITEMS.map((lbl, i) => pfRow('productInfo', i, lbl)).join('')}</div>
         <div class="form-group" style="margin-top:12px"><label>Rx &amp; Work Ticket Notes</label><textarea id="rx-notes" placeholder="Add notes here..." onchange="CF.saveReviewNotes('${caseId}')">${esc(r.rxNotes || '')}</textarea></div>
       </div>`;
     const designReqSection = `
       <div class="aox-section">
-        <div class="aox-section-title"><i class="ti ti-ruler-2" style="font-size:13px;color:#993556"></i> Design Requirements</div>
+        <div class="aox-section-title"><i class="ti ti-ruler-2" style="font-size:13px;color:#0A2C42"></i> Design Requirements</div>
         <div class="design-needs-grid" style="grid-template-columns:1fr 1fr 1fr">${ASP_DESIGN_REQ.map((lbl, i) => `<button class="dn-btn${r.aspDesignReq === i ? ' active' : ''}" onclick="CF.setAspDesignReq('${caseId}',${i})">${lbl}</button>`).join('')}</div>
         ${(r.aspDesignReq === 1 || r.aspDesignReq === 2) && r.aspMouldName ? `<div class="info-pair" style="margin-top:10px;border:none;padding-bottom:0"><span class="info-key">${r.aspDesignReq === 1 ? 'Tooth mould' : 'Mould name'}</span><span class="info-val">${esc(r.aspMouldName)}</span></div>` : ''}
       </div>`;
-    const designSpecSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-adjustments" style="font-size:13px;color:#534AB7"></i> Design Specifics</div>${ASP_SPEC_ITEMS.map(it => specRow(it[0], it[1])).join('')}</div>`;
+    const designSpecSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-adjustments" style="font-size:13px;color:#6B5E2F"></i> Design Specifics</div>${ASP_SPEC_ITEMS.map(it => specRow(it[0], it[1])).join('')}</div>`;
     let scanSection = '';
     if (lfxYes || lfxNo) {
       const scans = lfxYes ? ASP_LFX_SCANS.slice() : ASP_NONLFX_SCANS.slice();
       if (lfxNo && ccDigYes) scans.push('iCAM Data');
-      scanSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-files" style="font-size:13px;color:#0F6E56"></i> Required Scans and Files</div>${scans.map(n => fileDrop(n)).join('')}</div>`;
+      scanSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-files" style="font-size:13px;color:#157031"></i> Required Scans and Files</div>${scans.map(n => fileDrop(n)).join('')}</div>`;
     }
     let verifiedSection = '', screwSection = '';
     if (lfxNo) {
@@ -225,10 +225,10 @@ function buildAoxReviewChecklist(caseId) {
         const vm = r.aspVerifiedModel; let archSub = '';
         if (vm === 'tibase') archSub = archSubsection('TiUpper', 'Upper', ASP_TIBASE_OPTS, true) + archSubsection('TiLower', 'Lower', ASP_TIBASE_OPTS, true);
         else if (vm === 'scanbody') archSub = archSubsection('SbUpper', 'Upper', ASP_SCANBODY_OPTS, false) + archSubsection('SbLower', 'Lower', ASP_SCANBODY_OPTS, false);
-        verifiedSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-checkup-list" style="font-size:13px;color:#185FA5"></i> Verified Model</div><div class="acct-type-grid" style="margin-bottom:${vm ? '12px' : '0'}"><button class="acct-btn${vm === 'tibase' ? ' active-asp' : ''}" onclick="CF.setAspVerifiedModel('${caseId}','tibase')">Ti Base</button><button class="acct-btn${vm === 'scanbody' ? ' active-asp' : ''}" onclick="CF.setAspVerifiedModel('${caseId}','scanbody')">Scan body</button></div>${archSub}</div>`;
+        verifiedSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-checkup-list" style="font-size:13px;color:#136AA3"></i> Verified Model</div><div class="acct-type-grid" style="margin-bottom:${vm ? '12px' : '0'}"><button class="acct-btn${vm === 'tibase' ? ' active-asp' : ''}" onclick="CF.setAspVerifiedModel('${caseId}','tibase')">Ti Base</button><button class="acct-btn${vm === 'scanbody' ? ' active-asp' : ''}" onclick="CF.setAspVerifiedModel('${caseId}','scanbody')">Scan body</button></div>${archSub}</div>`;
       }
       const screwIdxs = ccDigYes ? [6, 7] : ASP_SCREW_OPTS.map((_, i) => i);
-      screwSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-tool" style="font-size:13px;color:#854F0B"></i> Final Screws</div><div class="form-group" style="margin-bottom:12px"><label>Total number of screws</label><input type="text" id="asp-screw-count" value="${dclAttr(r.aspScrewCount || '')}" placeholder="e.g. 6" onchange="CF.setAspScrewCount('${caseId}',this.value)"></div><span class="sec-label" style="margin-top:0">Screw type</span>${screwIdxs.map(i => `<div class="opt-row${r.aspScrewType === i ? ' sel' : ''}" onclick="CF.setAspScrewType('${caseId}',${i})"><input type="radio" ${r.aspScrewType === i ? 'checked' : ''}><span class="opt-row-label">${ASP_SCREW_OPTS[i]}</span></div>`).join('')}</div>`;
+      screwSection = `<div class="aox-section"><div class="aox-section-title"><i class="ti ti-tool" style="font-size:13px;color:#8E6510"></i> Final Screws</div><div class="form-group" style="margin-bottom:12px"><label>Total number of screws</label><input type="text" id="asp-screw-count" value="${dclAttr(r.aspScrewCount || '')}" placeholder="e.g. 6" onchange="CF.setAspScrewCount('${caseId}',this.value)"></div><span class="sec-label" style="margin-top:0">Screw type</span>${screwIdxs.map(i => `<div class="opt-row${r.aspScrewType === i ? ' sel' : ''}" onclick="CF.setAspScrewType('${caseId}',${i})"><input type="radio" ${r.aspScrewType === i ? 'checked' : ''}><span class="opt-row-label">${ASP_SCREW_OPTS[i]}</span></div>`).join('')}</div>`;
     }
     acctContent = rxSection + designReqSection + designSpecSection + scanSection + verifiedSection + screwSection;
   }
@@ -283,7 +283,7 @@ function doctorReqsPanel(c) {
   const reqs = (c.designReqs || []).filter(x => x && x.trim());
   if (!reqs.length) return '';
   const ack = `<div style="border-top:0.5px solid var(--color-border-tertiary);margin-top:10px;padding-top:10px"><div class="d-check-item${c.reqsAck ? ' checked' : ''}" onclick="CF.toggleReqsAck('${c.id}')"><input type="checkbox" ${c.reqsAck ? 'checked' : ''}><label>I have reviewed these doctor requirements</label></div>${c.reqsAck && c.reqsAckAt ? `<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:6px;padding-left:2px"><i class="ti ti-user-check" style="font-size:12px"></i> Acknowledged by ${esc(c.reqsAckBy)} • ${fmtTs(c.reqsAckAt)}</div>` : ''}</div>`;
-  return `<div class="panel"><div class="panel-title"><i class="ti ti-notes" style="color:#534AB7"></i> Doctor Requirements</div><div class="d-checklist">${reqs.map((req, i) => `<div class="d-check-item" style="cursor:default;align-items:flex-start"><span style="font-size:13px;line-height:1.45"><strong style="color:#534AB7">${i + 1}.</strong> ${esc(req)}</span></div>`).join('')}</div>${ack}</div>`;
+  return `<div class="panel"><div class="panel-title"><i class="ti ti-notes" style="color:#6B5E2F"></i> Doctor Requirements</div><div class="d-checklist">${reqs.map((req, i) => `<div class="d-check-item" style="cursor:default;align-items:flex-start"><span style="font-size:13px;line-height:1.45"><strong style="color:#6B5E2F">${i + 1}.</strong> ${esc(req)}</span></div>`).join('')}</div>${ack}</div>`;
 }
 function toggleReqsAck(id) { const c = getC(id); if (!c) return; c.reqsAck = !c.reqsAck; if (c.reqsAck) { c.reqsAckBy = Data.currentUser(); c.reqsAckAt = new Date().toISOString(); cfEvent(c, 'Doctor requirements acknowledged'); } else { cfEvent(c, 'Doctor requirements acknowledgment removed'); c.reqsAckBy = null; c.reqsAckAt = null; } cfSave(c); if (selectedMode) renderMode(selectedMode); }
 
@@ -408,8 +408,8 @@ function reviewSummaryPanel(c) {
   const acct = r.acctType;
   const pair = (k, v) => `<div class="info-pair"><span class="info-key">${k}</span><span class="info-val">${v}</span></div>`;
   const sect = (t, inner) => inner ? `<span class="sec-label">${t}</span><div class="info-row" style="margin-bottom:6px">${inner}</div>` : '';
-  const yn = v => v === 'yes' ? `<span style="color:#0F6E56;font-weight:600">Yes</span>` : (v === 'no' ? `<span style="color:#A32D2D;font-weight:600">No</span>` : '—');
-  const pf = v => v === 'pass' ? `<span style="color:#0F6E56;font-weight:600">Pass</span>` : (v === 'fail' ? `<span style="color:#A32D2D;font-weight:600">Fail</span>` : '—');
+  const yn = v => v === 'yes' ? `<span style="color:#157031;font-weight:600">Yes</span>` : (v === 'no' ? `<span style="color:#A0341A;font-weight:600">No</span>` : '—');
+  const pf = v => v === 'pass' ? `<span style="color:#157031;font-weight:600">Pass</span>` : (v === 'fail' ? `<span style="color:#A0341A;font-weight:600">Fail</span>` : '—');
   const filesFor = name => { const key = name.replace(/[^a-zA-Z0-9]/g, '_'); const fl = (r.aspFiles && r.aspFiles[key]) || []; return fl.length ? fl.map(f => esc(f.name)).join(', ') : `<span style="color:var(--color-text-tertiary)">—</span>`; };
   let body = `<span class="sec-label" style="margin-top:0">Account type</span><div class="info-row" style="margin-bottom:6px">${pair('Account', acct === 'tri' ? 'TRI / Legacy Account' : 'ASPEN & ClearChoice')}</div>`;
   if (acct === 'tri') {
@@ -447,7 +447,7 @@ function reviewSummaryPanel(c) {
       body += sect('Final Screws', fx);
     }
   }
-  return `<div class="panel"><div class="panel-title"><i class="ti ti-clipboard-check" style="color:#185FA5"></i> Case Review Selections</div>${body}</div>`;
+  return `<div class="panel"><div class="panel-title"><i class="ti ti-clipboard-check" style="color:#136AA3"></i> Case Review Selections</div>${body}</div>`;
 }
 
 // Read-only history of the Outsourcing phase — shown once a case is at QC or later
@@ -455,7 +455,7 @@ function reviewSummaryPanel(c) {
 function outsourceSummaryPanel(c) {
   const f = c.designFile; const notes = c.outsourceNotes;
   if (!f && !notes) return '';
-  return `<div class="panel"><div class="panel-title"><i class="ti ti-send" style="color:#534AB7"></i> Outsourcing</div>
+  return `<div class="panel"><div class="panel-title"><i class="ti ti-send" style="color:#6B5E2F"></i> Outsourcing</div>
     ${f ? `<div class="file-list" style="margin-bottom:${notes ? '10px' : '0'}"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span></div></div>` : '<div style="font-size:12px;color:var(--color-text-tertiary)">No returned design file recorded</div>'}
     ${notes ? `<div class="info-pair" style="border:none;padding-bottom:0"><span class="info-key">Outsource notes</span><span class="info-val" style="white-space:pre-wrap">${esc(notes)}</span></div>` : ''}
   </div>`;
@@ -465,11 +465,11 @@ function outsourceSummaryPanel(c) {
 function qcSummaryPanel(c) {
   const notes = c.qcNotes;
   let outcome = '';
-  if (c.stage === 'Complete') outcome = '<span style="color:#0F6E56;font-weight:600">Passed</span>';
-  else if (c.stage === 'QC Failed - Rework') outcome = '<span style="color:#A32D2D;font-weight:600">Failed — in-house rework</span>';
-  else if (c.stage === 'QC Failed - Resend') outcome = '<span style="color:#A32D2D;font-weight:600">Failed — resent to outsourcer</span>';
+  if (c.stage === 'Complete') outcome = '<span style="color:#157031;font-weight:600">Passed</span>';
+  else if (c.stage === 'QC Failed - Rework') outcome = '<span style="color:#A0341A;font-weight:600">Failed — in-house rework</span>';
+  else if (c.stage === 'QC Failed - Resend') outcome = '<span style="color:#A0341A;font-weight:600">Failed — resent to outsourcer</span>';
   if (!outcome && !notes) return '';
-  return `<div class="panel"><div class="panel-title"><i class="ti ti-eye-check" style="color:#993556"></i> QC Result</div>
+  return `<div class="panel"><div class="panel-title"><i class="ti ti-eye-check" style="color:#0A2C42"></i> QC Result</div>
     ${outcome ? `<div class="info-pair"><span class="info-key">Outcome</span><span class="info-val">${outcome}</span></div>` : ''}
     ${notes ? `<div class="info-pair" style="border:none;padding-bottom:0"><span class="info-key">QC notes</span><span class="info-val" style="white-space:pre-wrap">${esc(notes)}</span></div>` : ''}
   </div>`;
@@ -482,7 +482,7 @@ function designPhaseRank(stage) { return { 'Design Check': 0, 'Outsourcing': 1, 
 // =====================================================================
 function renderCaseDetail(c) {
   const si = stageN(c.stage); const ps = ['Data Entry', 'Review', 'Design', 'Outsource', 'QC', 'Complete'];
-  const prog = `<div class="progress-track" role="list">${ps.map((s, i) => `<div class="prog-step" role="listitem"><div class="prog-node"><div class="prog-circle${i < si ? ' done' : i === si ? ' active' : ''}">${i < si ? '<i class="ti ti-check" style="font-size:12px"></i>' : (i + 1)}</div><span class="prog-label${i === si ? ' active' : ''}">${s}</span></div>${i < ps.length - 1 ? `<div class="prog-connector${i < si ? ' done' : ''}"></div>` : ''}</div>`).join('')}${c.stage === 'Scanning' ? `<div style="margin-left:8px;padding:3px 10px;background:#EDE9FE;border-radius:10px;font-size:11px;color:#534AB7;font-weight:500;white-space:nowrap"><i class="ti ti-scan" style="font-size:11px;margin-right:4px"></i>Scanning</div>` : ''}</div>`;
+  const prog = `<div class="progress-track" role="list">${ps.map((s, i) => `<div class="prog-step" role="listitem"><div class="prog-node"><div class="prog-circle${i < si ? ' done' : i === si ? ' active' : ''}">${i < si ? '<i class="ti ti-check" style="font-size:12px"></i>' : (i + 1)}</div><span class="prog-label${i === si ? ' active' : ''}">${s}</span></div>${i < ps.length - 1 ? `<div class="prog-connector${i < si ? ' done' : ''}"></div>` : ''}</div>`).join('')}${c.stage === 'Scanning' ? `<div style="margin-left:8px;padding:3px 10px;background:#F4F0E4;border-radius:10px;font-size:11px;color:#6B5E2F;font-weight:500;white-space:nowrap"><i class="ti ti-scan" style="font-size:11px;margin-right:4px"></i>Scanning</div>` : ''}</div>`;
   const tl = `<div class="timeline">${(c.timeline.length ? c.timeline : ['No activity yet']).map((t, i, arr) => { const o = (t && typeof t === 'object') ? t : null; const text = o ? o.text : t; const sub = o ? `${o.by} • ${fmtTs(o.at)}` : (i === 0 ? c.updated : 'Recently'); return `<div class="tl-item"><div class="tl-dot${i === arr.length - 1 && c.stage !== 'Complete' ? ' active' : ' done'}"><i class="ti ti-${i === arr.length - 1 && c.stage !== 'Complete' ? 'clock' : 'check'}" style="font-size:12px"></i></div><div class="tl-line"></div><div class="tl-content"><div class="tl-title">${esc(text)}</div><div class="tl-sub">${esc(sub)}</div></div></div>`; }).join('')}</div>`;
   const fH = c.files.length ? c.files.map(f => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span></div>`).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files attached</span>';
   const rfH = c.reviewFiles.length ? c.reviewFiles.map(f => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span></div>`).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files yet</span>';
@@ -527,7 +527,7 @@ function renderCaseDetail(c) {
     ${buildAoxReviewChecklist(c.id)}
     <div class="panel" style="margin-top:0">
     <div class="design-notes-block">
-      <div class="design-notes-title"><i class="ti ti-notes" style="font-size:15px;color:#534AB7"></i> Doctor Requirement Notes</div>
+      <div class="design-notes-title"><i class="ti ti-notes" style="font-size:15px;color:#6B5E2F"></i> Doctor Requirement Notes</div>
       <div id="design-reqs-list">${renderDesignReqs(c)}</div>
       <button class="btn btn-sm" style="margin-top:8px" onclick="CF.addDesignReq('${c.id}')"><i class="ti ti-plus"></i> Add requirement</button>
     </div>
@@ -544,7 +544,7 @@ function renderCaseDetail(c) {
   }
 
   if (c.stage === 'Scanning') {
-    sp = `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#534AB7"></i> Scanning</div>
+    sp = `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#6B5E2F"></i> Scanning</div>
     <div class="alert alert-scan"><i class="ti ti-info-circle"></i> Upload scan files then pass to the Design team.</div>
     <div class="info-row" style="margin-bottom:14px">
       <div class="info-pair"><span class="info-key">Patient</span><span class="info-val">${esc(c.patient)}</span></div>
@@ -561,14 +561,14 @@ function renderCaseDetail(c) {
   if (c.stage === 'Design Check') { const done = c.checklistDone || []; const all = done.length === DESIGN_CL.length; const hasReqs = (c.designReqs || []).filter(x => x && x.trim()).length > 0; const reqsOk = !hasReqs || c.reqsAck; const canSend = all && reqsOk; sp = `<div class="panel"><div class="panel-title"><i class="ti ti-list-check"></i> Design Readiness Checklist</div><div class="d-checklist">${DESIGN_CL.map((item, i) => `<div class="d-check-item${done.includes(i) ? ' checked' : ''}" onclick="CF.toggleCheck('${c.id}',${i})"><input type="checkbox" ${done.includes(i) ? 'checked' : ''}><label>${item}</label></div>`).join('')}</div><div class="divider"></div><div class="actions-bar"><button class="btn btn-sm" onclick="CF.exportZip('${c.id}')"><i class="ti ti-download"></i> Export Case ZIP</button>${canSend ? `<button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Outsourcing','Design checklist complete — sent to outsourcer','Design Team')"><i class="ti ti-send"></i> Send to Outsourcer</button>` : `<span style="font-size:12px;color:var(--color-text-secondary)">${!all ? 'Complete all checklist items to proceed' : 'Acknowledge the doctor requirements to proceed'}</span>`}</div></div>`; }
   if (c.stage === 'Outsourcing') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-send"></i> Outsourcer Management</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Case ZIP sent. Upload returned design when ready.</div><div class="form-group" style="margin-bottom:14px"><label>Upload design from outsourcer</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload returned design file</div></div>${c.designFile ? `<div class="file-list"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(c.designFile.name)}</span><span class="file-size">${c.designFile.size}</span></div></div>` : ''}</div><div class="form-group" style="margin-bottom:14px"><label>Outsource notes</label><textarea id="outsource-notes" placeholder="Outsourcer, ETA, issues, anything QC should know..." onchange="CF.saveOutsourceNotes('${c.id}')">${esc(c.outsourceNotes || '')}</textarea></div><div class="actions-bar">${c.designFile ? `<button class="btn btn-primary" onclick="CF.beginQc('${c.id}')"><i class="ti ti-eye-check"></i> Begin QC</button>` : `<button class="btn btn-primary" onclick="CF.markDesignReceived('${c.id}')"><i class="ti ti-eye-check"></i> Mark design file received</button>`}</div></div>`; }
   if (c.stage === 'QC') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-eye-check"></i> Quality Control</div><div class="alert alert-info"><i class="ti ti-info-circle"></i> Review the outsourcer's design.</div>${c.designFile ? `<div class="file-list" style="margin-bottom:14px"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(c.designFile.name)}</span><span class="file-size">${c.designFile.size}</span></div></div>` : ''}
-    <label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:8px">QC decision</label><div class="qc-choice"><div class="qc-opt" id="qc-pass" onclick="CF.selectQC('pass')"><i class="ti ti-circle-check" style="color:#1D9E75"></i><div class="opt-title">Pass QC</div></div><div class="qc-opt" id="qc-fail" onclick="CF.selectQC('fail')"><i class="ti ti-circle-x" style="color:#A32D2D"></i><div class="opt-title">Fail QC</div></div></div>
+    <label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:8px">QC decision</label><div class="qc-choice"><div class="qc-opt" id="qc-pass" onclick="CF.selectQC('pass')"><i class="ti ti-circle-check" style="color:#1B8A3E"></i><div class="opt-title">Pass QC</div></div><div class="qc-opt" id="qc-fail" onclick="CF.selectQC('fail')"><i class="ti ti-circle-x" style="color:#A0341A"></i><div class="opt-title">Fail QC</div></div></div>
     <div id="fail-options" style="display:none;margin-top:12px"><label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:6px">Who will make adjustments?</label><div class="sub-choice"><div class="sub-opt" id="adj-self" onclick="CF.selectAdj('self')"><i class="ti ti-tool"></i><span>In-house</span></div><div class="sub-opt" id="adj-resend" onclick="CF.selectAdj('resend')"><i class="ti ti-refresh"></i><span>Resend</span></div></div></div>
     <div class="form-group" style="margin-top:12px"><label>QC notes</label><textarea id="qc-notes" placeholder="Describe issues or approvals..."></textarea></div>
     <div class="actions-bar" id="qc-actions"></div></div>`; }
   if (c.stage === 'QC Failed - Rework') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-tool"></i> In-House Rework</div><div class="alert alert-warn"><i class="ti ti-alert-triangle"></i> QC failed — in-house adjustment in progress.</div><div class="form-group" style="margin-bottom:14px"><label>Upload revised design</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload corrected design</div></div></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Complete','In-house revision complete — case finalized','Design Team')"><i class="ti ti-check"></i> Mark Complete</button></div></div>`; }
   if (c.stage === 'QC Failed - Resend') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-refresh"></i> Resent to Outsourcer</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Redesign sent. Upload new design when received.</div><div class="form-group" style="margin-bottom:14px"><label>Upload revised design</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload new design file</div></div></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','QC','Revised design received — back to QC','Design Team')"><i class="ti ti-eye-check"></i> Begin QC Review</button></div></div>`; }
   if (c.stage === 'Complete') { sp = `<div class="panel"><div class="alert alert-success"><i class="ti ti-circle-check"></i> This case has been completed and approved.</div><div class="actions-bar"><button class="btn" onclick="CF.exportZip('${c.id}')"><i class="ti ti-download"></i> Download Final ZIP</button></div></div>`; }
-  if (c.stage === 'Case Coordination') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-player-pause" style="color:#854F0B"></i> On Hold — Case Coordination</div><div class="alert alert-warn"><i class="ti ti-clock"></i> This case is on hold and has been sent to Case Coordination.</div>${c.coordReason ? `<div class="info-pair" style="border:none;padding-top:0"><span class="info-key">Reason</span><span class="info-val">${esc(c.coordReason)}</span></div>` : ''}<div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Review','Returned from Case Coordination — back to review','Case Coordination')"><i class="ti ti-arrow-back-up"></i> Return to Review</button></div></div>`; }
+  if (c.stage === 'Case Coordination') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-player-pause" style="color:#8E6510"></i> On Hold — Case Coordination</div><div class="alert alert-warn"><i class="ti ti-clock"></i> This case is on hold and has been sent to Case Coordination.</div>${c.coordReason ? `<div class="info-pair" style="border:none;padding-top:0"><span class="info-key">Reason</span><span class="info-val">${esc(c.coordReason)}</span></div>` : ''}<div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Review','Returned from Case Coordination — back to review','Case Coordination')"><i class="ti ti-arrow-back-up"></i> Return to Review</button></div></div>`; }
 
   if (['Design Check', 'Outsourcing', 'QC', 'QC Failed - Rework', 'QC Failed - Resend', 'Complete'].includes(c.stage)) {
     // Read-only history: show the Outsourcing summary once past it (QC or later),
@@ -596,7 +596,7 @@ function renderCaseDetail(c) {
     <div class="panel"><div class="panel-title"><i class="ti ti-clock"></i> Activity</div>${tl}</div>
     <div class="panel"><div class="panel-title"><i class="ti ti-file"></i> Entry files</div><div class="file-list">${fH}</div></div>
     ${c.reviewFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-paperclip"></i> Design files</div><div class="file-list">${rfH}</div></div>` : ''}
-    ${c.scanFiles && c.scanFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#534AB7"></i> Scan files</div><div class="file-list">${sfH}</div></div>` : ''}
+    ${c.scanFiles && c.scanFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#6B5E2F"></i> Scan files</div><div class="file-list">${sfH}</div></div>` : ''}
   </div><div>${sp}</div></div>`;
 }
 function afterDetailRender(c) { qcSel = null; adjSel = null; }
