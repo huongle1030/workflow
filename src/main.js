@@ -19,6 +19,12 @@ import './qc/app.js';
 const attachmentsByAttempt = {};
 const uploadingByAttempt = {};
 
+// Coordinator-typed CC addresses, keyed by attempt_id. Seeded from the attempt's persisted
+// cc_emails on render and updated as the coordinator edits the CC input; persisted to the
+// row via the set_attempt_cc RPC just before approve/saveEdit so both send paths (the
+// immediate send-attempt and the dr-outreach-tick cron) CC the same people.
+const ccByAttempt = {};
+
 // =====================================================================
 // Configuration
 // =====================================================================
@@ -1352,11 +1358,67 @@ function fmtBytes(n) {
   return (n / 1024 / 1024).toFixed(1) + ' MB';
 }
 
+// Look up a rendered outbound/approval row by attempt_id (both Pending sub-tabs share
+// renderOutboundCard, so an action handler that only has the id can recover the row — e.g.
+// to honor the scan-ack exemption on the RX gate).
+function findOutboundRow(attemptId) {
+  return (state.outbound || []).find(r => r.attempt_id === attemptId)
+      || (state.approval || []).find(r => r.attempt_id === attemptId)
+      || null;
+}
+
+// A small yellow "CC'd to" sub-card (same yellow family as Account Preferences / the Most
+// Recent Communication banner). Used to surface who an email was CC'd to on inbound replies
+// and inside the Most Recent Communication card on outbound/approval cards. `list` is a
+// text[] of addresses; returns '' when empty.
+function renderCcChips(list, opts = {}) {
+  const addrs = (Array.isArray(list) ? list : []).map(a => String(a || '').trim()).filter(Boolean);
+  // When `always` is set the box renders even with no CC (shows a short empty state); otherwise
+  // it collapses to nothing. `className` lets a caller size/style its variant (e.g. 'in-note').
+  if (!addrs.length && !opts.always) return '';
+  const extra = opts.className ? ' ' + opts.className : '';
+  const inner = addrs.length
+    ? `<div class="cc-list">${addrs.map(a => `<span class="cc-chip">${esc(a)}</span>`).join('')}</div>`
+    : `<div class="cc-empty">No one was CC'd</div>`;
+  return `
+    <div class="cc-banner${extra}">
+      <div class="label">CC'd to</div>
+      ${inner}
+    </div>`;
+}
+
+// Parse a free-typed CC field (comma / semicolon / whitespace separated) into a deduped list
+// of syntactically-valid email addresses. Returns { valid: string[], invalid: string[] }.
+function parseCcInput(raw) {
+  const tokens = String(raw || '').split(/[\s,;]+/).map(t => t.trim()).filter(Boolean);
+  const valid = [], invalid = [], seen = new Set();
+  for (const t of tokens) {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(t)) { invalid.push(t); continue; }
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    valid.push(t);
+  }
+  return { valid, invalid };
+}
+
+// Read the CC input for a card, sync ccByAttempt, and return the parsed valid addresses.
+function collectCc(attemptId) {
+  const el = document.getElementById('cc-' + attemptId);
+  const { valid, invalid } = parseCcInput(el ? el.value : (ccByAttempt[attemptId] || []).join(', '));
+  ccByAttempt[attemptId] = valid;
+  return { valid, invalid };
+}
+
 // Drop zone + uploaded-file chips at the bottom of an outbound/approval email card.
 function renderAttachZone(attemptId) {
   if (!attemptId) return '';
   const files = attachmentsByAttempt[attemptId] || [];
   const uploading = !!uploadingByAttempt[attemptId];
+  // An RX PDF is required to send on real case drafts; scan-submission acks are exempt
+  // (they carry the job-aid PDF instead). Highlight the zone while no PDF is attached.
+  const row = findOutboundRow(attemptId);
+  const rxRequired = !!row && row.reason !== 'scan_submission_ack' && !files.length;
   const chips = files.map(f => `
     <span class="attach-file-chip" title="${esc(f.filename)}">
       <span class="attach-file-name">📄 ${esc(f.filename)}</span>
@@ -1366,13 +1428,13 @@ function renderAttachZone(attemptId) {
   return `
     <div class="attach-section" onclick="event.stopPropagation();">
       ${files.length ? `<div class="attach-files">${chips}</div>` : ''}
-      <label class="attach-dropzone${uploading ? ' uploading' : ''}"
+      <label class="attach-dropzone${uploading ? ' uploading' : ''}${rxRequired ? ' required' : ''}"
              ondragover="event.preventDefault(); this.classList.add('dragover');"
              ondragleave="this.classList.remove('dragover');"
              ondrop="this.classList.remove('dragover'); handleAttachDrop(event, '${attemptId}');">
         <input type="file" accept="application/pdf" multiple style="display:none;"
                onchange="handleAttachSelect(this, '${attemptId}');" />
-        <span class="attach-dz-text">${uploading ? 'Uploading…' : '📎 Drag PDFs here, or click to attach'}</span>
+        <span class="attach-dz-text">${uploading ? 'Uploading…' : (rxRequired ? '📎 RX PDF required - drag the RX here, or click to attach' : '📎 Drag PDFs here, or click to attach')}</span>
       </label>
     </div>`;
 }
@@ -1394,6 +1456,13 @@ async function handleAttachSelect(input, attemptId) {
   const files = input.files ? Array.from(input.files) : [];
   await uploadAttachments(files, attemptId);
   input.value = '';
+}
+
+// CC input change/blur: parse + dedupe the typed addresses into ccByAttempt and warn (once)
+// if any token isn't a valid email. Persistence to the row happens at approve/saveEdit time.
+function onCcInput(attemptId) {
+  const { invalid } = collectCc(attemptId);
+  if (invalid.length) toast('Ignoring invalid CC address' + (invalid.length > 1 ? 'es' : '') + ': ' + invalid.join(', '), 'err');
 }
 
 async function uploadAttachments(files, attemptId) {
@@ -1491,6 +1560,12 @@ function renderOutboundCard(r) {
     // exocad link gate for them so they can be approved like any other draft.
     const isScanAck = r.reason === 'scan_submission_ack';
     const uploading = !!uploadingByAttempt[r.attempt_id];
+    // RX-attachment send gate: a real case draft can't be sent until an RX PDF is attached.
+    // Scan-submission acks are exempt (they carry the job-aid PDF, not an RX).
+    const hasRx = (attachmentsByAttempt[r.attempt_id] || []).length > 0;
+    const rxOk = isScanAck || hasRx;
+    // Persisted CC list for this attempt (seeds the CC input, kept in sync via ccByAttempt).
+    const ccList = ccByAttempt[r.attempt_id] || (Array.isArray(r.cc_emails) ? r.cc_emails : []);
     // Exocad link presence — gate sends if missing
     const hasExocadLink = !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
     const linkOk = hasExocadLink || isScanAck;
@@ -1519,12 +1594,16 @@ function renderOutboundCard(r) {
     const commIcon = COMM_MEDIUM_ICON[r.most_recent_comm_medium] || '';
     const commMeta = [r.most_recent_comm_actor, r.most_recent_comm_at ? fmtDate(r.most_recent_comm_at) : '']
       .filter(Boolean).map(esc).join(' · ');
+    // CC of the most recent received email on this case (latest inbound reply's cc list).
+    // Always shown inside the Most Recent Communication card (empty state when no one was CC'd).
+    const commCc = renderCcChips(r.most_recent_comm_cc, { always: true, className: 'in-note' });
     const noteCard = hasNote ? `
       <div class="note-banner">
         <div class="label">${commIcon ? commIcon + ' ' : ''}Most Recent Communication</div>
         ${commMeta ? `<div class="note-meta">${commMeta}</div>` : ''}
         ${commSubject ? `<div class="note-subject">${esc(commSubject)}</div>` : ''}
         ${commBody ? `<div class="text">${esc(commBody)}</div>` : ''}
+        ${commCc}
       </div>` : '';
     const hasSide = !!(r.account_preferences || r.prefs_summary_headline || hasNote);
     return `
@@ -1558,6 +1637,14 @@ function renderOutboundCard(r) {
             ${buildOutboundBody(r.body_html, r.exocad_viewer_url)}
             ${isScanAck ? `<div class="attach-row" title="This PDF is attached automatically by the sender when you Approve &amp; Send — it is not stored on the draft, so it only appears on the email that goes out."><span class="attach-clip">📎</span> Onix Fixed ordering in AspenLabs.pdf <span class="attach-note">(attached on send)</span></div>` : ''}
             ${renderAttachZone(r.attempt_id)}
+            <div class="cc-field" onclick="event.stopPropagation();">
+              <label for="cc-${r.attempt_id}">CC (optional)</label>
+              <input type="text" id="cc-${r.attempt_id}" autocomplete="off"
+                     placeholder="name@example.com, another@example.com"
+                     value="${esc(ccList.join(', '))}"
+                     onchange="onCcInput('${r.attempt_id}')" onblur="onCcInput('${r.attempt_id}')" />
+              <div class="cc-hint">These people are CC'd when the email is sent. Separate multiple addresses with a comma or a space.</div>
+            </div>
           </div>
           ${hasSide ? `
             <div class="outbound-side">
@@ -1591,8 +1678,8 @@ function renderOutboundCard(r) {
         `}
         <div class="actions">
           ${hasExocadLink ? `<button class="act view-exocad" onclick="window.open('${esc(r.exocad_viewer_url)}', '_blank', 'noopener')">View in Exocad</button>` : ''}
-          <button class="act approve" onclick="approve('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : '')}>Approve &amp; Send</button>
-          <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : '')}>Edit Then Send</button>
+          <button class="act approve" onclick="approve('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : (!rxOk ? 'disabled title="Attach the RX PDF first"' : ''))}>Approve &amp; Send</button>
+          <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : (!rxOk ? 'disabled title="Attach the RX PDF first"' : ''))}>Edit Then Send</button>
           <button class="act reject" onclick="reject('${r.attempt_id}')">Reject</button>
           ${isScanAck ? '' : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
         </div>
@@ -1615,7 +1702,7 @@ function renderOutboundCard(r) {
           <label>Reason for edit (optional)</label>
           <input type="text" id="note-${r.attempt_id}" placeholder="e.g. tighter copy, doctor prefers first name" />
           <div class="actions">
-            <button class="act approve" onclick="saveEdit('${r.attempt_id}')">Save &amp; Send</button>
+            <button class="act approve" onclick="saveEdit('${r.attempt_id}')" ${!rxOk ? 'disabled title="Attach the RX PDF first"' : ''}>Save &amp; Send</button>
             <button class="act slate" onclick="hideEdit('${r.attempt_id}')">Cancel</button>
           </div>
         </div>
@@ -2174,6 +2261,7 @@ function renderInbound() {
             ` : ''}
           `;
         })()}
+        ${renderCcChips(r.cc_recipients)}
         ${isUnmatched ? `
           <div class="link-gate">
             <div class="link-gate-title">⚠ No case linked to this reply yet</div>
@@ -2241,24 +2329,37 @@ function toggleItem(id) {
 function showEdit(id) { document.getElementById('edit-' + id).classList.add('shown'); }
 function hideEdit(id) { document.getElementById('edit-' + id).classList.remove('shown'); }
 
-// Confirm before a send. If no PDF is attached, warn (but let the coordinator proceed).
-function confirmSend(id, withAttachMsg) {
-  const hasAttach = (attachmentsByAttempt[id] || []).length > 0;
-  if (!hasAttach) {
-    return confirm('No PDF is attached to this email.\n\nSend it without an attachment?\n(Click Cancel if you want to attach a PDF first.)');
+// Hard RX gate before a send. Real case drafts require an attached RX PDF; scan-submission
+// acks are exempt (they carry the job-aid PDF, not an RX). Returns false — blocking the
+// send — when the RX is missing, otherwise asks the coordinator to confirm.
+function confirmSend(id, confirmMsg) {
+  if (!rxAttachedOrExempt(id)) {
+    toast('Attach the RX PDF before sending', 'err');
+    return false;
   }
-  return confirm(withAttachMsg);
+  return confirm(confirmMsg);
+}
+
+// True when the attempt either has a coordinator-attached PDF or is a scan-submission ack.
+function rxAttachedOrExempt(id) {
+  const row = findOutboundRow(id);
+  if (row && row.reason === 'scan_submission_ack') return true;
+  return (attachmentsByAttempt[id] || []).length > 0;
 }
 
 async function approve(id) {
   if (!confirmSend(id, 'Approve and send this email now?')) return;
+  // Persist the typed CC list onto the attempt BEFORE approving, so both send paths (the
+  // immediate send-attempt below and the dr-outreach-tick cron fallback) CC the same people.
+  const { valid: cc } = collectCc(id);
   try {
+    await persistCc(id, cc);
     await callRpc('approve_attempt', { p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name), p_note: null });
     // Send this one draft immediately (in seconds) instead of waiting for the 5-min
     // cron. If the call fails, the draft stays 'queued' and the cron sends it next tick.
     toast('Approved ·sending now…', 'ok');
     try {
-      const r = await sendAttemptNow(id);
+      const r = await sendAttemptNow(id, cc);
       if (r && r.error) throw new Error(r.error);
       toast('Sent', 'ok');
     } catch (e) {
@@ -2272,8 +2373,10 @@ async function approve(id) {
 // Send a single approved attempt right away via the send-attempt edge function. That
 // function only sends an attempt already in 'queued' state (i.e. approved), claiming it
 // atomically, so this can never send an unapproved draft or double-send.
-async function sendAttemptNow(attemptId) {
+async function sendAttemptNow(attemptId, cc) {
   const cfg = getConfig();
+  const body = { attempt_id: attemptId };
+  if (Array.isArray(cc) && cc.length) body.cc = cc;  // belt-and-suspenders for the immediate path
   const res = await fetch(cfg.url.replace(/\/+$/, '') + '/functions/v1/send-attempt', {
     method: 'POST',
     headers: {
@@ -2281,11 +2384,20 @@ async function sendAttemptNow(attemptId) {
       Authorization: 'Bearer ' + cfg.key,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ attempt_id: attemptId }),
+    body: JSON.stringify(body),
   });
   const out = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(out.error || ('send-attempt ' + res.status));
   return out;
+}
+
+// Persist a CC list onto an attempt via the set_attempt_cc RPC (SECURITY DEFINER — the
+// frontend uses the publishable key). Best-effort: a CC-persist failure shouldn't abort the
+// send, so callers proceed even if this throws.
+async function persistCc(attemptId, cc) {
+  try {
+    await callRpc('set_attempt_cc', { p_attempt_id: attemptId, p_cc_emails: (Array.isArray(cc) && cc.length) ? cc : null });
+  } catch (e) { console.error('set_attempt_cc failed:', e); }
 }
 
 // Manually attach an exocad viewer link to a case. Used when the sync agent
@@ -2340,13 +2452,17 @@ async function reject(id) {
   } catch (e) {}
 }
 async function saveEdit(id) {
-  if (!(attachmentsByAttempt[id] || []).length &&
-      !confirm('No PDF is attached to this email.\n\nSend it without an attachment?\n(Click Cancel if you want to attach a PDF first.)')) return;
+  // Hard RX gate (same as Approve & Send): real case drafts need an attached RX PDF.
+  if (!rxAttachedOrExempt(id)) { toast('Attach the RX PDF before sending', 'err'); return; }
   const subject = document.getElementById('subject-' + id).value;
   // contenteditable div ·innerHTML preserves bullets, bold, links, etc.
   const body    = document.getElementById('body-' + id).innerHTML;
   const note    = document.getElementById('note-' + id).value;
+  // This path only queues the draft; the dr-outreach-tick cron sends it. Persist CC onto the
+  // row first so the cron CCs the typed addresses.
+  const { valid: cc } = collectCc(id);
   try {
+    await persistCc(id, cc);
     await callRpc('edit_and_approve_attempt', {
       p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name),
       p_subject: subject, p_body_html: body,

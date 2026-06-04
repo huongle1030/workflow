@@ -229,7 +229,7 @@ async function uploadLargeAttachment(token: string, mailbox: string, messageId: 
   }
 }
 
-async function graphSendMail(to: string, subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null) {
+async function graphSendMail(to: string, subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null, cc?: string[] | null) {
   const token = await graphToken();
   const fromMailbox = sender && sender.length > 3 ? sender : MS_SENDER_USER_ID;
   const tag = `[SKDLA-${caseNumber}]`;
@@ -240,6 +240,7 @@ async function graphSendMail(to: string, subject: string, html: string, caseNumb
     toRecipients: [{ emailAddress: { address: to } }],
     singleValueExtendedProperties: [{ id: "String {66f5a359-4659-4830-9070-00047ec6ac6e} Name SKDLACaseNumber", value: caseNumber }],
   };
+  if (cc && cc.length) messageBody.ccRecipients = cc.map((a) => ({ emailAddress: { address: a } }));
   if (attachments && attachments.length) messageBody.attachments = attachments;
   const draftRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/messages`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(messageBody) });
   if (!draftRes.ok) throw new Error(`Graph draft failed (mailbox=${fromMailbox}): ${draftRes.status} ${await draftRes.text()}`);
@@ -258,7 +259,12 @@ serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   let attemptId: string | null = null;
-  try { attemptId = (await req.json())?.attempt_id ?? null; } catch { /* no body */ }
+  let bodyCc: string[] | null = null;
+  try {
+    const reqBody = await req.json();
+    attemptId = reqBody?.attempt_id ?? null;
+    if (Array.isArray(reqBody?.cc)) bodyCc = reqBody.cc.filter((a: unknown): a is string => typeof a === "string" && a.length > 0);
+  } catch { /* no body */ }
   if (!attemptId) return json({ error: "attempt_id required" }, 400);
 
   // Atomically claim the row: only one caller can flip queued -> sent. If it isn't
@@ -269,7 +275,7 @@ serve(async (req) => {
     .update({ status: "sent", sent_at: sentAt })
     .eq("id", attemptId)
     .eq("status", "queued")
-    .select("id, queue_id, to_email, subject, body_html, sender_mailbox")
+    .select("id, queue_id, to_email, subject, body_html, sender_mailbox, cc_emails")
     .maybeSingle();
   if (claimErr) return json({ error: `claim failed: ${claimErr.message}` }, 500);
   if (!claimed) {
@@ -289,7 +295,14 @@ serve(async (req) => {
     }
     // Merge in coordinator-uploaded attachments (inline if small, upload session if large).
     const { inline, large } = await buildAttachmentSets(autoAttachments, claimed.id);
-    const send = await graphSendMail(claimed.to_email, claimed.subject, claimed.body_html, q?.case_number ?? "approved", claimed.sender_mailbox, inline, large);
+    // CC: prefer what's persisted on the row (set via set_attempt_cc before approve); fall
+    // back to the cc passed inline on this request. Persist the inline cc so the audit/row
+    // reflects what was actually sent.
+    const cc = (Array.isArray(claimed.cc_emails) && claimed.cc_emails.length) ? claimed.cc_emails : bodyCc;
+    if ((!claimed.cc_emails || !claimed.cc_emails.length) && cc && cc.length) {
+      await sb.from("dr_outreach_attempts").update({ cc_emails: cc }).eq("id", claimed.id);
+    }
+    const send = await graphSendMail(claimed.to_email, claimed.subject, claimed.body_html, q?.case_number ?? "approved", claimed.sender_mailbox, inline, large, cc);
     await sb.from("dr_outreach_attempts").update({ graph_message_id: send.graph_message_id, graph_conversation_id: send.graph_conversation_id }).eq("id", claimed.id);
     await sb.rpc("record_outbox_outbound", { p_case_number: q?.case_number, p_account_no: null, p_attempt_id: claimed.id, p_to_addr: claimed.to_email, p_subject: claimed.subject, p_body_html: claimed.body_html, p_graph_msg_id: send.graph_message_id });
     return json({ sent: true, attempt_id: claimed.id, to: claimed.to_email, sender: send.sender_used, inline_attachments: inline?.length ?? 0, large_attachments: large?.length ?? 0 });

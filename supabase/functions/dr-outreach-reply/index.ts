@@ -48,7 +48,7 @@ function mailboxFromResource(resource: string | undefined | null): string {
 async function fetchMessage(userId: string, messageId: string) {
   const token = await graphToken();
   const res = await fetch(
-    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/messages/${messageId}?$select=id,conversationId,subject,from,bodyPreview,body,internetMessageId,toRecipients,receivedDateTime`,
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/messages/${messageId}?$select=id,conversationId,subject,from,bodyPreview,body,internetMessageId,toRecipients,ccRecipients,receivedDateTime`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!res.ok) throw new Error(`Graph fetch message failed: ${res.status} ${await res.text()}`);
@@ -181,6 +181,9 @@ serve(async (req) => {
       const msg = await fetchMessage(mailbox, note.resourceData.id);
       const subject = msg.subject ?? "";
       const fromAddr = msg.from?.emailAddress?.address ?? "";
+      const ccRecipients: string[] = (msg.ccRecipients ?? [])
+        .map((c: any) => c?.emailAddress?.address)
+        .filter((a: unknown): a is string => typeof a === "string" && a.length > 0);
       const html = msg.body?.contentType === "html" ? (msg.body?.content ?? "") : "";
       const text = msg.body?.contentType === "text" ? (msg.body?.content ?? "") : stripHtml(html);
       const internetMsgId = msg.internetMessageId ?? null;
@@ -232,6 +235,7 @@ serve(async (req) => {
         graph_conversation_id: msg.conversationId,
         internet_message_id: internetMsgId,
         from_email: fromAddr,
+        cc_recipients: ccRecipients.length ? ccRecipients : null,
         subject,
         body_text: text.slice(0, 50_000),
         body_html: html.slice(0, 200_000),
