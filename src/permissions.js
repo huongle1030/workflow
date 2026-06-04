@@ -28,6 +28,9 @@ export const ROLES = {
   DESIGNER:          'designer',
   SCANNING:          'scanning',
   EDWARD_TA:         'edward_ta',
+  // QC mode-only role. Sees ONLY the Quality Control mode — no outreach, no
+  // case coordination, no other CaseFlow modes.
+  QC_TECH:           'qc_tech',
 };
 
 // Human-readable labels for every role (including admin-assigned ones).
@@ -45,6 +48,7 @@ export const ROLE_LABELS = {
   [ROLES.SCANNING]:          'Scanning',
   // edward_ta is admin-assigned (a named individual); shown as this label.
   [ROLES.EDWARD_TA]:         'CaseFlow Tech Advisor',
+  [ROLES.QC_TECH]:           'QC Tech',
 };
 
 // ---- Capability keys ----
@@ -76,6 +80,9 @@ export const CAPABILITIES = {
   CASEFLOW_REVIEW:  'caseflow.review',
   CASEFLOW_SCAN:    'caseflow.scan',
   CASEFLOW_DESIGN:  'caseflow.design',
+  // Quality Control mode (Log QC Reject + Internal Remake). Gated to qc_tech
+  // plus the full-access roles (via ALL_CAPS).
+  CASEFLOW_QC:      'caseflow.qc',
 };
 
 const C = CAPABILITIES;
@@ -127,6 +134,9 @@ const CASE_REVIEW_CAPS = [C.CASEFLOW_REVIEW, C.CASEFLOW_ENTRY, C.CASEFLOW_SCAN];
 const DESIGNER_CAPS    = [C.CASEFLOW_DESIGN, C.CASEFLOW_SCAN];
 const SCANNING_CAPS    = [C.CASEFLOW_SCAN];
 const EDWARD_TA_CAPS   = [...CASEFLOW_CAPS]; // all 4 CaseFlow modes
+// QC Tech sees ONLY the Quality Control mode. The full-access roles also get
+// CASEFLOW_QC automatically via ALL_CAPS (Object.values(CAPABILITIES)).
+const QC_TECH_CAPS     = [C.CASEFLOW_QC];
 
 // Full capability set — account_manager and above see the whole app, EXCEPT
 // restricted capabilities (granted explicitly per role below).
@@ -150,6 +160,7 @@ export const ROLE_CAPABILITIES = {
   [ROLES.DESIGNER]:        new Set(DESIGNER_CAPS),
   [ROLES.SCANNING]:        new Set(SCANNING_CAPS),
   [ROLES.EDWARD_TA]:       new Set(EDWARD_TA_CAPS),
+  [ROLES.QC_TECH]:         new Set(QC_TECH_CAPS),
 };
 
 // Returns the current signed-in employee's role string, or null if unknown.

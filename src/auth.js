@@ -29,6 +29,8 @@ export const ROLE_OPTIONS = [
   { value: 'designer',         label: 'Designer' },
   { value: 'scanning',         label: 'Scanning' },
   { value: 'edward_ta',        label: 'CaseFlow Tech Advisor' },
+  // QC mode-only role.
+  { value: 'qc_tech',          label: 'QC Tech' },
 ];
 
 let currentUser = null;
