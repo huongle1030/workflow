@@ -2757,7 +2757,7 @@ function switchMode(mode) {
 
   if (mode === 'outreach') {
     // Land on the first tab this role can see; activateOutreachTab handles the
-    // Pending parent + sub-nav. (e.g. case_entry lands on Submit.)
+    // Pending parent + sub-nav. (e.g. data_entry lands on Submit.)
     activateOutreachTab(firstPermittedOutreachTab());
     document.querySelector('.brand-text .sub').textContent = 'Spectrum Killian · Coordinator Inbox';
     document.querySelector('.brand-text .name').textContent = 'Design Approvals';
@@ -2823,7 +2823,7 @@ function isOutreachTabPermitted(which) {
 }
 
 // First permitted outreach tab in DOM order — used as the landing tab for roles
-// whose default ("outbound") is hidden (e.g. case_entry lands on Submit).
+// whose default ("outbound") is hidden (e.g. data_entry lands on Submit).
 function firstPermittedOutreachTab() {
   const tabs = document.querySelectorAll('#tabs-outreach .tab');
   for (const t of tabs) {
@@ -2864,9 +2864,9 @@ function runTabSideEffects(which) {
 // approval (boot) — see initAuth callback.
 function applyPermissions() {
   // 0) Brand-switcher: hide whole apps/modes this role can't enter. CaseFlow
-  //    production-only roles (data_entry/case_review/designer/scanning/edward_ta)
-  //    lose Design Approvals + Case Coordination here; outreach-only roles never
-  //    saw CaseFlow gating before, but now each item respects its cap.
+  //    production-only roles (designer/scanning) lose Design Approvals + Case
+  //    Coordination here; the entry roles (data_entry/case_review) keep Design
+  //    Approvals but see only their CaseFlow subset. Each item respects its cap.
   MODE_ORDER.forEach(mode => {
     const item = document.querySelector(`.app-item[data-mode="${mode}"]`);
     if (item) item.classList.toggle('hidden', !isModePermitted(mode));
@@ -3299,9 +3299,9 @@ async function lookupCase() {
     const typeLabel = (r.event_type || '').replace(/_/g, ' ');
     const mediumIcon = { phone: '📞', email: '✉️', note: '📝' }[r.medium] || '';
     const ccChip = r.cc_compliant === false
-      ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#fde8e8;color:#b42318;border:1px solid #f3b4b4;">⚠ not CC&#39;d</span>'
+      ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#F8E3DC;color:#A0341A;border:1px solid #F0C7B9;">⚠ not CC&#39;d</span>'
       : (r.cc_compliant === true && r.medium === 'email')
-      ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#e7f6ec;color:#1a7f37;border:1px solid #b7e0c4;">CC&#39;d</span>'
+      ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#DDF4E4;color:#157031;border:1px solid #BCE5C8;">CC&#39;d</span>'
       : '';
     const statusClass = (r.status || '').replace(/\s+/g, '_').toLowerCase();
     const statusChip = r.status
@@ -3624,7 +3624,7 @@ function renderDashboard() {
         const slug = stage.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
         const cells = list.slice(0, 4).map(c => {
           const pname = c.patient_name || '';
-          const holdBadge = c.hold_duration ? '<span style="background:#4ADE80;color:#14532d;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px;">' + esc(c.hold_duration) + '</span>' : '';
+          const holdBadge = c.hold_duration ? '<span style="background:#A5DDB6;color:#1A5C2A;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px;">' + esc(c.hold_duration) + '</span>' : '';
         return '<div class="case-row">' +
             '<span class="cnum">' + esc(c.case_id) + '</span>' +
             holdBadge +
@@ -4166,13 +4166,13 @@ function selectPrefAcct(acctNum) {
   if (!p) { ed.innerHTML = '<div class="empty">Select an account.</div>'; return; }
 
   const flagBanner = p.derived_from_accounts
-    ? '<div style="background:#FEF3C7; border:1px solid #FDE68A; color:#92400E; padding:10px 14px; border-radius:8px; margin-bottom:14px; font-size:13px;">' +
+    ? '<div style="background:#FBF3DC; border:1px solid #F0DFA8; color:#8E6510; padding:10px 14px; border-radius:8px; margin-bottom:14px; font-size:13px;">' +
       '<strong>Auto-backfilled from existing Accounts data.</strong> Edit these to mark as curated.</div>'
-    : '<div style="background:#D1FAE5; border:1px solid #A7F3D0; color:#065F46; padding:10px 14px; border-radius:8px; margin-bottom:14px; font-size:13px;">' +
+    : '<div style="background:#DDF4E4; border:1px solid #BCE5C8; color:#157031; padding:10px 14px; border-radius:8px; margin-bottom:14px; font-size:13px;">' +
       '<strong>Curated by a human.</strong> Last updated ' + esc(p.updated_at || '-') + ' by ' + esc(p.updated_by || '-') + '.</div>';
 
   const aiBadge = p.ai_extracted_at
-    ? '<span style="background:#E0F2FE;color:var(--blue);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-left:8px;">Auto-extracted</span>'
+    ? '<span style="background:#E9F5FD;color:var(--blue);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-left:8px;">Auto-extracted</span>'
     : '';
 
   ed.innerHTML =
@@ -4191,7 +4191,7 @@ function selectPrefAcct(acctNum) {
       '</div>' +
       '<div style="display:flex; gap:10px; margin-top:18px; flex-wrap:wrap;">' +
         '<button onclick="savePrefs(\'' + esc(p.account_number) + '\')" class="cc-btn-primary" style="margin-top:0;">Save Preferences</button>' +
-        '<button onclick="extractPrefsWithAI(\'' + esc(p.account_number) + '\')" class="cc-btn-primary" style="margin-top:0;background:#9A7B2E;">Auto-extract</button>' +
+        '<button onclick="extractPrefsWithAI(\'' + esc(p.account_number) + '\')" class="cc-btn-primary" style="margin-top:0;background:#8E8252;">Auto-extract</button>' +
         (p.derived_from_accounts ? '<button onclick="bulkExtractPrefs()" class="cc-btn-primary" style="margin-top:0;background:var(--slate);">Bulk: Extract All Auto Rows</button>' : '') +
       '</div>' +
       (p.raw_case_entry_pref || p.raw_dr_pref ? (
@@ -4836,7 +4836,7 @@ initAuth(() => boot());
 let metricsRows = null;
 
 async function openMetrics() {
-  // Capability guard — design_approver / case_entry can't open Metrics even if
+  // Capability guard — design_approver / data_entry can't open Metrics even if
   // an onclick path reached this function.
   if (!can(CAPABILITIES.METRICS)) return;
   const modal = document.getElementById('metrics-modal');

@@ -19,16 +19,15 @@ const APP_NAME = 'caseCoord_designApprovals';
 // The full role list + labels live in permissions.js (ROLES / ROLE_LABELS).
 export const ROLE_OPTIONS = [
   { value: 'design_approver',  label: 'Design Approver' },
-  { value: 'case_entry',       label: 'Case Entry/Review' },
   { value: 'account_manager',  label: 'Account Manager' },
   { value: 'technical_advisor', label: 'Technical Advisor' },
   { value: 'manager',          label: 'Manager' },
-  // CaseFlow production-only roles (no outreach / case coordination).
+  // Entry roles: Design Approvals access + a CaseFlow subset.
   { value: 'data_entry',       label: 'Data Entry' },
   { value: 'case_review',      label: 'Case Review' },
+  // CaseFlow production-only roles (no outreach / case coordination).
   { value: 'designer',         label: 'Designer' },
   { value: 'scanning',         label: 'Scanning' },
-  { value: 'edward_ta',        label: 'CaseFlow Tech Advisor' },
   // QC mode-only role.
   { value: 'qc_tech',          label: 'QC Tech' },
 ];
