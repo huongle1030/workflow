@@ -98,11 +98,6 @@ const RESTRICTED_CAPS = [
   C.HIDE_SENDER,
 ];
 
-// All four CaseFlow mode caps. Granted in full to design_approver and to
-// account_manager+ (incl. technical_advisor) via ALL_CAPS; the entry and
-// CaseFlow-only roles below get a hand-picked subset instead.
-const CASEFLOW_CAPS = [C.CASEFLOW_ENTRY, C.CASEFLOW_REVIEW, C.CASEFLOW_SCAN, C.CASEFLOW_DESIGN];
-
 const DESIGN_APPROVER_CAPS = [
   C.MODE_OUTREACH,  // can open the Design Approvals app...
   C.MODE_CC,        // ...and the Case Coordination app.
@@ -112,8 +107,9 @@ const DESIGN_APPROVER_CAPS = [
   C.TAB_READY,
   C.TAB_RESCHEDULE,
   C.TAB_LOOKUP,
-  ...CASEFLOW_CAPS,
-  // ...but NOT outbound.revenue, audit, editlog, or metrics.
+  // NOT outbound.revenue, audit, editlog, or metrics.
+  // NOT any CaseFlow mode: Data Entry, Case Review, Scanning, Design Team, and
+  // Quality Control are all hidden from design_approver (outreach + CC only).
 ];
 
 // Shared Design Approvals (outreach) access for the entry roles
