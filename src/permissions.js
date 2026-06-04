@@ -15,25 +15,27 @@ import { getCurrentEmployee } from './auth.js';
 // ---- Roles (DB employees.role value) ----
 export const ROLES = {
   DESIGN_APPROVER:   'design_approver',
-  CASE_ENTRY:        'case_entry',
   ACCOUNT_MANAGER:   'account_manager',
+  // Technical Advisor: full Design Approvals access + all 4 CaseFlow modes.
+  // (Absorbs the retired `edward_ta` "CaseFlow Tech Advisor" role.)
   TECHNICAL_ADVISOR: 'technical_advisor',
   MANAGER:           'manager',
   EXECUTIVE:         'executive',
   ADMIN:             'admin',
-  // CaseFlow production-only roles. These see ONLY their CaseFlow mode(s) — no
-  // Design Approvals (outreach) and no Case Coordination access.
+  // Entry roles: Design Approvals access + a hand-picked subset of CaseFlow.
+  //   DATA_ENTRY   absorbs the retired `case_entry` role (Design Approvals +
+  //                Data Entry CaseFlow tab only).
+  //   CASE_REVIEW  = DATA_ENTRY + Case Review + Scanning CaseFlow tabs.
   DATA_ENTRY:        'data_entry',
   CASE_REVIEW:       'case_review',
+  // CaseFlow production-only roles (no Design Approvals / Case Coordination).
   DESIGNER:          'designer',
   SCANNING:          'scanning',
-  EDWARD_TA:         'edward_ta',
 };
 
 // Human-readable labels for every role (including admin-assigned ones).
 export const ROLE_LABELS = {
   [ROLES.DESIGN_APPROVER]:   'Design Approver',
-  [ROLES.CASE_ENTRY]:        'Case Entry/Review',
   [ROLES.ACCOUNT_MANAGER]:   'Account Manager',
   [ROLES.TECHNICAL_ADVISOR]: 'Technical Advisor',
   [ROLES.MANAGER]:           'Manager',
@@ -43,8 +45,6 @@ export const ROLE_LABELS = {
   [ROLES.CASE_REVIEW]:       'Case Review',
   [ROLES.DESIGNER]:          'Designer',
   [ROLES.SCANNING]:          'Scanning',
-  // edward_ta is admin-assigned (a named individual); shown as this label.
-  [ROLES.EDWARD_TA]:         'CaseFlow Tech Advisor',
 };
 
 // ---- Capability keys ----
@@ -90,9 +90,9 @@ const RESTRICTED_CAPS = [
   C.HIDE_SENDER,
 ];
 
-// All four CaseFlow mode caps. Granted in full to the outreach roles
-// (design_approver/case_entry) and to account_manager+ via ALL_CAPS; the
-// CaseFlow production-only roles below get a hand-picked subset instead.
+// All four CaseFlow mode caps. Granted in full to design_approver and to
+// account_manager+ (incl. technical_advisor) via ALL_CAPS; the entry and
+// CaseFlow-only roles below get a hand-picked subset instead.
 const CASEFLOW_CAPS = [C.CASEFLOW_ENTRY, C.CASEFLOW_REVIEW, C.CASEFLOW_SCAN, C.CASEFLOW_DESIGN];
 
 const DESIGN_APPROVER_CAPS = [
@@ -108,25 +108,28 @@ const DESIGN_APPROVER_CAPS = [
   // ...but NOT outbound.revenue, audit, editlog, or metrics.
 ];
 
-const CASE_ENTRY_CAPS = [
+// Shared Design Approvals (outreach) access for the entry roles
+// (Data Entry / Case Review). Mirrors the access the retired `case_entry`
+// role had — no outbound, inbound, audit, editlog, metrics.
+const ENTRY_DA_CAPS = [
   C.MODE_OUTREACH,
   C.MODE_CC,
   C.TAB_SUBMIT,
   C.TAB_READY,
   C.TAB_RESCHEDULE,
   C.TAB_LOOKUP,
-  ...CASEFLOW_CAPS,
-  // No outbound, inbound, audit, editlog, metrics.
 ];
+
+// Data Entry = Design Approvals access + Data Entry CaseFlow tab only.
+const DATA_ENTRY_CAPS  = [...ENTRY_DA_CAPS, C.CASEFLOW_ENTRY];
+// Case Review = everything Data Entry has + Case Review + Scanning CaseFlow tabs.
+const CASE_REVIEW_CAPS = [...DATA_ENTRY_CAPS, C.CASEFLOW_REVIEW, C.CASEFLOW_SCAN];
 
 // CaseFlow production-only roles — each sees ONLY the CaseFlow mode(s) listed.
 // None get MODE_OUTREACH or MODE_CC, so the Design Approvals and Case
 // Coordination apps are hidden from the brand switcher and unreachable.
-const DATA_ENTRY_CAPS  = [C.CASEFLOW_ENTRY];
-const CASE_REVIEW_CAPS = [C.CASEFLOW_REVIEW, C.CASEFLOW_ENTRY, C.CASEFLOW_SCAN];
 const DESIGNER_CAPS    = [C.CASEFLOW_DESIGN, C.CASEFLOW_SCAN];
 const SCANNING_CAPS    = [C.CASEFLOW_SCAN];
-const EDWARD_TA_CAPS   = [...CASEFLOW_CAPS]; // all 4 CaseFlow modes
 
 // Full capability set — account_manager and above see the whole app, EXCEPT
 // restricted capabilities (granted explicitly per role below).
@@ -135,21 +138,21 @@ const ALL_CAPS = Object.values(CAPABILITIES).filter(c => !RESTRICTED_CAPS.includ
 // ---- Role -> capability set (encodes both matrices) ----
 export const ROLE_CAPABILITIES = {
   [ROLES.DESIGN_APPROVER]: new Set(DESIGN_APPROVER_CAPS),
-  [ROLES.CASE_ENTRY]:      new Set(CASE_ENTRY_CAPS),
   [ROLES.ACCOUNT_MANAGER]: new Set(ALL_CAPS),
-  // Technical Advisor mirrors Account Manager exactly (same full access set).
+  // Technical Advisor mirrors Account Manager exactly (full access set, which
+  // already includes all 4 CaseFlow modes). Absorbs the retired edward_ta role.
   [ROLES.TECHNICAL_ADVISOR]: new Set(ALL_CAPS),
   // Manager additionally can hide/unhide senders.
   [ROLES.MANAGER]:         new Set([...ALL_CAPS, C.HIDE_SENDER]),
   // Executive additionally sees the AI case-number suggestion and can hide senders.
   [ROLES.EXECUTIVE]:       new Set([...ALL_CAPS, C.VIEW_CASE_SUGGESTION, C.HIDE_SENDER]),
   [ROLES.ADMIN]:           new Set(ALL_CAPS), // admin also short-circuits in can()
-  // CaseFlow production-only roles (no outreach / case coordination).
+  // Entry roles: Design Approvals access + a CaseFlow subset.
   [ROLES.DATA_ENTRY]:      new Set(DATA_ENTRY_CAPS),
   [ROLES.CASE_REVIEW]:     new Set(CASE_REVIEW_CAPS),
+  // CaseFlow production-only roles (no outreach / case coordination).
   [ROLES.DESIGNER]:        new Set(DESIGNER_CAPS),
   [ROLES.SCANNING]:        new Set(SCANNING_CAPS),
-  [ROLES.EDWARD_TA]:       new Set(EDWARD_TA_CAPS),
 };
 
 // Returns the current signed-in employee's role string, or null if unknown.
