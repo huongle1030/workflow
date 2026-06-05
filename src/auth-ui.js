@@ -30,10 +30,7 @@ function authCard(innerHtml) {
   return `
     <div class="auth-card">
       <div class="auth-logo"></div>
-      <div class="auth-brand">
-        <div class="auth-brand-name">ClearPath<span class="auth-brand-os">OS</span></div>
-        <div class="auth-brand-sub">Lab Management System</div>
-      </div>
+      <img class="auth-sk" src="/logos/spectrum-killian-stacked-white.png" alt="Spectrum Killian" />
       ${innerHtml}
     </div>
   `;
@@ -106,7 +103,6 @@ async function onSubmitRole() {
 export function showPendingScreen() {
   const overlay = ensureOverlay();
   overlay.innerHTML = authCard(`
-    <div class="auth-icon auth-icon-clock">⏳</div>
     <h2>Pending approval</h2>
     <p class="auth-sub">
       Your role request has been submitted. An admin will review and approve it soon.
@@ -134,7 +130,6 @@ function onCheckAgain() {
 export function showRejectedScreen() {
   const overlay = ensureOverlay();
   overlay.innerHTML = authCard(`
-    <div class="auth-icon auth-icon-blocked">⛔</div>
     <h2>Access not granted</h2>
     <p class="auth-sub">
       Your account is not active. Please contact an admin if you believe this is a mistake.
