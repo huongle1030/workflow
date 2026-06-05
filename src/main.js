@@ -474,11 +474,12 @@ async function submitFeedback() {
 
 let readyRows = [];
 async function loadReady() {
-  // Bypass the default 100-row queryView cap — show up to 1000 eligible cases.
+  // Doctor-approved Full-Arch cases still sitting at the design-approval step — ABS's worklist
+  // of cases to scan off. Bypass the default 100-row queryView cap — show up to 1000.
   if (inCowork) {
-    readyRows = await runMcpSql('SELECT * FROM v_aox_design_approval_due ORDER BY waiting_since DESC LIMIT 1000') || [];
+    readyRows = await runMcpSql('SELECT * FROM v_aox_ready_for_abs_scan ORDER BY waiting_since DESC LIMIT 1000') || [];
   } else {
-    readyRows = await restGet('/rest/v1/v_aox_design_approval_due?select=*&order=waiting_since.desc&limit=1000') || [];
+    readyRows = await restGet('/rest/v1/v_aox_ready_for_abs_scan?select=*&order=waiting_since.desc&limit=1000') || [];
   }
   document.getElementById('badge-ready').textContent = readyRows.length;
   updateActionsBadge();
@@ -488,11 +489,9 @@ async function loadReady() {
 function renderReady() {
   const root = document.getElementById('list-ready');
   if (!readyRows.length) {
-    root.innerHTML = '<div class="empty"><strong>No AoX cases are currently waiting on doctor approval.</strong><br/>Cases scanned into "Doctor Design Approval - Full Arch" will appear here.</div>';
+    root.innerHTML = '<div class="empty"><strong>No approved Full-Arch cases are waiting for ABS to scan off.</strong><br/>Doctor-approved cases still at "Doctor Design Approval - Full Arch" will appear here.</div>';
     return;
   }
-  // Quick set of case_numbers already in the open queue (with drafts)
-  const inQueue = new Set((state.outboundAll || state.outbound || []).map(r => r.case_number));
   // Group by practice for at-a-glance reading
   const sorted = readyRows.slice().sort((a, b) => {
     const da = new Date(a.waiting_since).getTime();
@@ -517,15 +516,16 @@ function renderReady() {
           <th>Doctor email</th>
           <th>Waiting</th>
           <th>Dr due</th>
-          <th>In queue?</th>
+          <th>Approved</th>
         </tr>
       </thead>
       <tbody>`;
+  const srcLabel = { outreach: 'Outreach', casecoord: 'Case Coord', abs_advanced: 'ABS' };
   const rows = sorted.map(r => {
-    const inq = inQueue.has(r.case_number);
     const days = daysAgo(r.waiting_since);
     const late = r.doctor_due_date && new Date(r.doctor_due_date) < new Date();
-    return `<tr class="${inq ? '' : 'not-queued'}">
+    const src = srcLabel[r.approved_source] || (r.approved_source || '');
+    return `<tr>
       <td><span class="pan">${esc(r.pan_number || '-')}</span></td>
       <td><span class="case-sub">${esc(r.case_number)}</span></td>
       <td>${esc(r.patient_name || '-')}</td>
@@ -533,7 +533,7 @@ function renderReady() {
       <td>${esc(r.dr_email || '-')}</td>
       <td>${days}d (${fmtDay(r.waiting_since)})</td>
       <td class="${late ? 'late' : ''}">${fmtDay(r.doctor_due_date)}${late ? ' ⚠' : ''}</td>
-      <td>${inq ? '<span style="color: var(--green); font-weight: 600;">In queue</span>' : '<span style="color: var(--gold); font-weight: 600;">Pending pickup</span>'}</td>
+      <td><span style="color: var(--green); font-weight: 600;">${esc(src)}</span>${r.approved_on ? ' · ' + fmtDay(r.approved_on) : ''}</td>
     </tr>`;
   }).join('');
   root.innerHTML = header + rows + '</tbody></table>';
@@ -706,9 +706,8 @@ function exportReschedule() {
 async function loadOutbound() {
   // Reads the triage view (v_pending_outbound + a triage_bucket derived from
   // case_communications) and splits it across the two Pending sub-tabs:
-  //   outbound_only           -> Pending Outbound (we still need to send)
-  //   pending_approval_unsure -> Pending Approval, flagged "not sure" (note-only evidence)
-  //   pending_approval        -> Pending Approval, confirmed via a shared mailbox
+  //   outbound_only    -> Pending Outbound (scan-submission acks ONLY)
+  //   pending_approval -> Pending Approval (every other case, any comm count)
   let rows;
   if (inCowork) {
     rows = await runMcpSql('SELECT * FROM v_pending_outbound_triage LIMIT 2000') || [];
@@ -719,8 +718,7 @@ async function loadOutbound() {
   const visibleRows = rows.filter(r => !isHiddenPartner(r.strategic_partner));
   state.outboundAll = visibleRows;
   state.outbound = visibleRows.filter(r => r.triage_bucket === 'outbound_only');
-  state.approval  = visibleRows.filter(r => r.triage_bucket === 'pending_approval'
-                                  || r.triage_bucket === 'pending_approval_unsure');
+  state.approval  = visibleRows.filter(r => r.triage_bucket === 'pending_approval');
   document.getElementById('badge-out').textContent = state.outbound.length;
   document.getElementById('stat-out').textContent = state.outbound.length;
   const ba = document.getElementById('badge-approval');
@@ -877,6 +875,52 @@ function esc(s) {
 // message sits on top, with older quoted replies below it. Trim to just that
 // top message so the card shows one email, not the entire chain. Cuts at the
 // first quoted-reply header (Outlook "From:…Sent:…" / Gmail "On … wrote:").
+// Timeline/print event types that are SCRAPED from a mailbox (so their body is a
+// flat blob carrying the whole forwarded thread). Our own outbound "system email"
+// is generated from a template and is intentionally excluded.
+const SCRAPED_EMAIL_EVENT_TYPES = new Set(['mailbox email', 'doctor reply']);
+
+// Mail sent from one of our own @skdla.com addresses. The reply matcher
+// sometimes mis-ingests our OWN outbound mail as an inbound "doctor reply";
+// a @skdla.com sender means it's ours, not a real doctor reply.
+function isOurMailbox(addr) {
+  return /@skdla\.com\s*$/i.test((addr || '').trim());
+}
+// True only for a genuine (external-sender) doctor reply.
+function isRealDoctorReply(r) {
+  return r.event_type === 'doctor reply' && !isOurMailbox(r.from_addr || r.counterparty);
+}
+// Corrected direction: a self-sent "reply" is really outbound.
+function effectiveDirection(r) {
+  if (r.event_type === 'doctor reply' && isOurMailbox(r.from_addr || r.counterparty)) return 'outbound';
+  return r.direction || 'internal';
+}
+
+// "External sender" warning banners that mail gateways inject. Stripped from
+// scraped email bodies wherever they appear (matched whitespace-tolerantly, and
+// with or without the space after the colon, e.g. "CAUTION:Message").
+const EXTERNAL_CAUTION_RE = new RegExp(
+  'CAUTION:\\s*(?:' +
+    // "Message is from EXTERNAL SENDER. Please practice caution..."
+    'Message\\s+is\\s+from\\s+EXTERNAL\\s+SENDER\\.?\\s*' +
+      'Please\\s+practice\\s+caution\\s+before\\s+clicking\\s+links\\s+and\\s+' +
+      'check\\s+the\\s+email\\s+address\\s+before\\s+replying\\.?' +
+    '|' +
+    // "This email originated from outside the organization. DO NOT reply..."
+    'This\\s+email\\s+originated\\s+from\\s+outside\\s+the\\s+organization\\.?\\s*' +
+      'DO\\s+NOT\\s+reply,?\\s+click\\s+on\\s+links,?\\s+or\\s+open\\s+attachments\\s+' +
+      'unless\\s+you\\s+were\\s+expecting\\s+the\\s+email,?\\s+recognize\\s+the\\s+sender,?\\s+' +
+      'and\\s+know\\s+the\\s+content\\s+is\\s+safe\\.?' +
+  ')',
+  'gi'
+);
+function stripExternalCaution(text) {
+  return (text || '').replace(EXTERNAL_CAUTION_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// NOTE: decodeHtmlEntities() (used above to clean scraped &nbsp; etc.) is defined
+// later in this file; function declarations hoist so the call sites resolve fine.
+
 function topEmailMessage(body) {
   if (!body) return '';
   const cuts = [];
@@ -884,7 +928,8 @@ function topEmailMessage(body) {
   if (m) cuts.push(m.index);
   m = body.match(/\bOn\b[\s\S]{0,160}?\bwrote:/i);            // Gmail quote header
   if (m) cuts.push(m.index);
-  return (cuts.length ? body.slice(0, Math.min(...cuts)) : body).trim();
+  const top = cuts.length ? body.slice(0, Math.min(...cuts)) : body;
+  return stripExternalCaution(top);   // drop any "EXTERNAL SENDER" gateway banner
 }
 
 // Wrap any bare exocad webview URLs in <a> tags so the link is clickable in
@@ -1119,9 +1164,9 @@ function updateGlobalSearchScope() {
   if (!hint || !input || !searchRow) return;
   const activeTab = currentOutreachTab();
   const labelMap = {
-    outbound: 'Pending Outbound',
-    approval: 'Pending Approval',
-    inbound: 'Pending Replies',
+    outbound: 'Scan Submission',
+    approval: 'Pending Outbound',
+    inbound: 'Pending Classification',
     ready: 'Ready for ABS Scan',
     reschedule: 'Reschedule',
   };
@@ -1288,7 +1333,7 @@ function renderOutbound() {
       msg = "<strong>Couldn't reach Supabase.</strong><br/>" + esc(lastResponse._error) +
             "<br/><br/>Click <strong>Config</strong> (top right) to set your URL and service role key, or <strong>Diag</strong> to see the raw response.";
     } else {
-      msg = "<strong>Pending outbound queue is empty.</strong><br/>Drafts awaiting your review will appear here.";
+      msg = "<strong>No scan submissions to review.</strong><br/>Scan-submission acks awaiting your review will appear here.";
     }
     root.innerHTML = '<div class="empty">' + msg + '</div>';
     if (countEl) countEl.textContent = '';
@@ -1572,20 +1617,19 @@ function renderOutboundCard(r) {
     const noLinkChip = linkOk
       ? ''
       : '<span class="activity-chip nolink">⚠ No exocad link yet</span>';
-    // Triage chip — shown on Pending Approval cards. "not sure" = contact since the
-    // draft seen only in Case Notes (no shared-mailbox proof); "reached doctor" =
-    // confirmed via implants@/clearchoice@ (shared mailbox / CC'd / system send / reply).
+    // Triage chip — shown on Pending Approval cards that actually have a logged communication.
+    // (As of 20260605_01 the bucket no longer requires >1 comm — Approval = every non-scan-ack
+    // case — so gate the "in conversation" label on real comm evidence to avoid mislabeling
+    // cases with no contact yet.)
     let triageChip = '';
-    if (r.triage_bucket === 'pending_approval_unsure') {
-      triageChip = '<span class="triage-chip unsure" title="Contact logged in Case Notes since this draft, but not confirmed via a shared mailbox">⚠ not sure</span>';
-    } else if (r.triage_bucket === 'pending_approval') {
-      triageChip = '<span class="triage-chip confirmed" title="Confirmed contact since this draft via implants@/clearchoice@ (shared mailbox)">✓ reached doctor</span>';
+    if (r.triage_bucket === 'pending_approval' && r.most_recent_comm_at) {
+      triageChip = '<span class="triage-chip confirmed" title="At least one communication logged on this case">✓ in conversation</span>';
     }
     // Most recent communication on the case — any medium (email / phone / note),
     // regardless of age — shown with its full details (the same content the Case
     // Lookup timeline shows). Rendered as a lighter-yellow sub-card to the left
     // of Account Preferences.
-    let commBody = (r.most_recent_comm_body || '').replace(/\r\n?/g, '\n').trim();
+    let commBody = decodeHtmlEntities((r.most_recent_comm_body || '').replace(/\r\n?/g, '\n')).trim();
     // Emails store the whole thread — show only the most recent message's body.
     if (r.most_recent_comm_medium === 'email') commBody = topEmailMessage(commBody);
     const commSubject = (r.most_recent_comm_subject || '').trim();
@@ -1710,16 +1754,16 @@ function renderOutboundCard(r) {
     </div>`;
 }
 
-// Pending Approval sub-tab: drafts where we've already reached the doctor since
-// the draft was proposed (triage_bucket pending_approval / _unsure). Reuses the
-// outbound card (so Approve/Edit/Reject still work) and shows the triage chip.
+// Pending Approval sub-tab: every non-scan-ack case (triage_bucket pending_approval; the bucket
+// no longer keys on comm count as of 20260605_01). Reuses the outbound card (so Approve/Edit/
+// Reject still work) and shows the "in conversation" chip when the case has a logged comm.
 function renderApproval() {
   const root = document.getElementById('list-approval');
   if (!root) return;
   const countEl = document.getElementById('approval-count');
   const all = state.approval || [];
   if (!all.length) {
-    root.innerHTML = '<div class="empty"><strong>Nothing awaiting doctor approval.</strong><br/>Drafts where we’ve already reached the doctor since the draft was proposed will appear here.</div>';
+    root.innerHTML = '<div class="empty"><strong>Nothing awaiting approval.</strong><br/>Doctor design-approval cases (everything except scan-submission acks) will appear here.</div>';
     if (countEl) countEl.textContent = '';
     return;
   }
@@ -1728,16 +1772,10 @@ function renderApproval() {
     ? all.filter(r => [r.case_number, r.pan_number, r.dr_last_name, r.practice_name, r.to_email, r.subject]
         .some(v => String(v || '').toLowerCase().includes(q)))
     : all.slice();
-  // "Not sure" first (need a human look), then confirmed; newest evidence first.
-  rows.sort((a, b) => {
-    const rank = x => x.triage_bucket === 'pending_approval_unsure' ? 0 : 1;
-    if (rank(a) !== rank(b)) return rank(a) - rank(b);
-    return new Date(b.evidence_at || 0) - new Date(a.evidence_at || 0);
-  });
+  // Newest communication first.
+  rows.sort((a, b) => new Date(b.evidence_at || 0) - new Date(a.evidence_at || 0));
   if (countEl) {
-    const unsure = all.filter(r => r.triage_bucket === 'pending_approval_unsure').length;
-    countEl.textContent = (q ? `Showing ${rows.length} of ${all.length}` : `${all.length} total`)
-                        + ` · ${unsure} not sure`;
+    countEl.textContent = q ? `Showing ${rows.length} of ${all.length}` : `${all.length} total`;
   }
   root.innerHTML = rows.map(renderOutboundCard).join('');
   lazyBackfillPrefSummaries();
@@ -2245,19 +2283,23 @@ function renderInbound() {
         <div class="meta">
           <div>Received ${fmtDate(r.received_at)}</div>
           ${r.patient_name ? '<div>' + esc(r.patient_name) + '</div>' : ''}
-          ${can(CAPABILITIES.HIDE_SENDER) ? `<button class="hide-sender-btn" onclick="event.stopPropagation(); addHiddenSender('${esc(r.from_email)}');" title="Hide ${esc(r.from_email)} from Pending Replies">Hide sender</button>` : ''}
+          ${can(CAPABILITIES.HIDE_SENDER) ? `<button class="hide-sender-btn" onclick="event.stopPropagation(); addHiddenSender('${esc(r.from_email)}');" title="Hide ${esc(r.from_email)} from Pending Classification">Hide sender</button>` : ''}
         </div>
       </div>
       <div class="item-body">
         <div style="margin-bottom:10px;font-size:12px;color:var(--slate);"><strong>Summary:</strong> ${esc(r.ai_summary || '')}</div>
         ${(() => {
-          const split = splitReplyAndQuote(r.body_text);
-          const hasQuote = split.quote && split.quote.length > 20;
+          const split = splitReplyAndQuote(decodeHtmlEntities(r.body_text));
+          // Drop the "EXTERNAL SENDER" gateway banner from both the visible reply
+          // and the collapsed quote.
+          const replyText = stripExternalCaution(split.reply);
+          const quoteText = stripExternalCaution(split.quote);
+          const hasQuote = quoteText && quoteText.length > 20;
           return `
-            <div class="reply-text">${esc(split.reply || '(no body)')}</div>
+            <div class="reply-text">${esc(replyText || '(no body)')}</div>
             ${hasQuote ? `
               <button class="reply-thread-toggle" onclick="this.nextElementSibling.classList.toggle('shown'); this.textContent = this.nextElementSibling.classList.contains('shown') ? 'Hide quoted email' : 'Show quoted email';">Show quoted email</button>
-              <div class="reply-thread">${esc(split.quote)}</div>
+              <div class="reply-thread">${esc(quoteText)}</div>
             ` : ''}
           `;
         })()}
@@ -3291,6 +3333,7 @@ function _normalizeCommRow(cc) {
     direction: cc.direction || 'internal',
     attempt_number: null,
     counterparty: cc.counterparty || cc.from_addr || cc.to_addr || null,
+    from_addr: cc.from_addr || null,
     subject: cc.subject || null,
     body: cc.body_text || null,
     reason: null,
@@ -3421,7 +3464,7 @@ async function lookupCase() {
   const counts = { outbound: 0, inbound: 0, internal: 0 };
   let firstSeen = null, lastSeen = null;
   for (const r of rows) {
-    counts[r.direction] = (counts[r.direction] || 0) + 1;
+    counts[effectiveDirection(r)] = (counts[effectiveDirection(r)] || 0) + 1;
     const t = r.event_time ? new Date(r.event_time) : null;
     if (t) {
       if (!firstSeen || t < firstSeen) firstSeen = t;
@@ -3462,7 +3505,11 @@ async function lookupCase() {
   const events = rows.map(r => {
     const t = r.event_time ? new Date(r.event_time) : null;
     const timeStr = t ? t.toLocaleDateString([], {timeZone:'America/Los_Angeles'}) + ' ' + t.toLocaleTimeString([], {timeZone:'America/Los_Angeles',hour:'numeric',minute:'2-digit'}) + ' PT' : '';
-    const typeLabel = (r.event_type || '').replace(/_/g, ' ');
+    // A 'reply' sent from our own @skdla.com mailbox is our outbound mail that the
+    // reply matcher mislabeled — show it as an outbound email, not a doctor reply.
+    const selfSentReply = r.event_type === 'doctor reply' && isOurMailbox(r.from_addr || r.counterparty);
+    const dir = effectiveDirection(r);
+    const typeLabel = (selfSentReply ? 'outbound email' : (r.event_type || '')).replace(/_/g, ' ');
     const mediumIcon = '';
     const ccChip = r.cc_compliant === false
       ? '<span class="tl-cc-chip" style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:#F8E3DC;color:#A0341A;border:1px solid #F0C7B9;">not CC&#39;d</span>'
@@ -3474,21 +3521,29 @@ async function lookupCase() {
       ? '<span class="tl-status-chip ' + statusClass + '">' + esc(r.status) + '</span>'
       : '';
     const subject = r.subject ? '<div class="subject">' + esc(r.subject) + '</div>' : '';
-    const body = r.body
+    // Scraped emails (mailbox scrapes + doctor replies) arrive as a flat blob
+    // with the whole forwarded thread inline, sometimes with un-decoded entities
+    // (&nbsp; etc.). Decode first, then collapse to just the most recent message
+    // (inbox-style) so the timeline card isn't a wall of quoted history.
+    let bodyText = r.body ? decodeHtmlEntities(r.body) : r.body;
+    if (bodyText && SCRAPED_EMAIL_EVENT_TYPES.has(r.event_type)) bodyText = topEmailMessage(bodyText);
+    const body = bodyText
       ? '<div class="body" onclick="this.classList.toggle(\'expanded\')">' +
-        (r.event_type === 'case_note' ? esc(r.body).replace(/\n/g, '<br>') : esc(r.body).replace(/\n/g, '<br>')) +
+        esc(bodyText).replace(/\n/g, '<br>') +
         '</div>'
       : '';
     return `
-      <div class="tl-event ${r.direction || 'internal'} ${statusClass}">
+      <div class="tl-event ${dir} ${statusClass}">
         <div class="tl-event-head">
           <span><span class="type">${mediumIcon ? mediumIcon + ' ' : ''}${esc(typeLabel)}</span> ${statusChip}${ccChip}</span>
           <span class="time">${esc(timeStr)}</span>
         </div>
         ${r.event_type === 'case_note'
             ? ((r.actor || r.counterparty) ? '<div class="actor">Note By: ' + esc(r.actor || r.counterparty) + '</div>' : '')
-            : (r.counterparty ? '<div class="actor">' + (r.direction === 'inbound' ? 'From' : 'To') + ': ' + esc(r.counterparty) + '</div>' : '') +
-              (r.actor && r.actor !== r.counterparty ? '<div class="actor">Actor: ' + esc(r.actor) + '</div>' : '')}
+            : selfSentReply
+              ? ((r.from_addr || r.counterparty) ? '<div class="actor">From: ' + esc(r.from_addr || r.counterparty) + '</div>' : '')
+              : (r.counterparty ? '<div class="actor">' + (r.direction === 'inbound' ? 'From' : 'To') + ': ' + esc(r.counterparty) + '</div>' : '') +
+                (r.actor && r.actor !== r.counterparty ? '<div class="actor">Shared Mailbox: ' + esc(r.actor) + '</div>' : '')}
         ${subject}
         ${body}
         ${r.note ? '<div style="font-size:11px;color:var(--slate);margin-top:6px;"><em>' + esc(r.note) + '</em></div>' : ''}
@@ -3574,19 +3629,29 @@ function printCaseLookup() {
   const eventsHtml = ordered.map(r => {
     const t   = r.event_time ? new Date(r.event_time) : null;
     const stamp = t ? t.toLocaleDateString([], {timeZone:'America/Los_Angeles'}) + ' ' + t.toLocaleTimeString([], {timeZone:'America/Los_Angeles',hour:'numeric',minute:'2-digit'}) + ' PT' : '';
-    const dirLabel = r.direction === 'outbound' ? 'Outbound' :
-                     r.direction === 'inbound'  ? 'Inbound'  : 'Internal';
-    const who = r.counterparty || r.actor || '';
-    const typeLabel = (r.event_type || '').replace(/_/g, ' ');
+    // A 'reply' from our own @skdla.com mailbox is mislabeled outbound mail.
+    const selfSentReply = r.event_type === 'doctor reply' && isOurMailbox(r.from_addr || r.counterparty);
+    const dir = effectiveDirection(r);
+    const dirLabel = dir === 'outbound' ? 'Outbound' :
+                     dir === 'inbound'  ? 'Inbound'  : 'Internal';
+    const who = (selfSentReply ? (r.from_addr || r.counterparty) : r.counterparty) || r.actor || '';
+    const typeLabel = (selfSentReply ? 'outbound email' : (r.event_type || '')).replace(/_/g, ' ');
     return `
       <div class="cnp-event">
         <div class="cnp-event-head">
           <span class="cnp-event-type">${esc(dirLabel)} · ${esc(typeLabel)}</span>
           <span class="cnp-event-time">${esc(stamp)}</span>
         </div>
-        ${who ? `<div class="cnp-event-who">${r.event_type === 'case_note' ? 'Note By: ' : esc(r.direction === 'inbound' ? 'From: ' : 'To: ')}${esc(who)}</div>` : ''}
+        ${who ? `<div class="cnp-event-who">${r.event_type === 'case_note' ? 'Note By: ' : selfSentReply ? 'From: ' : esc(r.direction === 'inbound' ? 'From: ' : 'To: ')}${esc(who)}</div>` : ''}
         ${r.subject ? `<div class="cnp-event-subj">${esc(r.subject)}</div>` : ''}
-        ${r.body ? `<div class="cnp-event-body">${esc(r.body)}</div>` : ''}
+        ${(() => {
+          // Match the on-screen timeline: decode entities, then collapse scraped
+          // emails (mailbox scrapes + doctor replies) to the most recent message
+          // instead of printing the whole quoted thread.
+          let b = r.body ? decodeHtmlEntities(r.body) : r.body;
+          if (b && SCRAPED_EMAIL_EVENT_TYPES.has(r.event_type)) b = topEmailMessage(b);
+          return b ? `<div class="cnp-event-body">${esc(b)}</div>` : '';
+        })()}
         ${r.note ? `<div class="cnp-event-note"><em>${esc(r.note)}</em></div>` : ''}
       </div>`;
   }).join('');
@@ -4640,9 +4705,9 @@ const TOUR_STEPS = [
     beforeShow: () => switchMode('outreach') },
 
   // Outreach
-  { title: "Click Pending", body: "Open the Pending group (Outbound · Approval · Replies). It opens on Pending Outbound.",
+  { title: "Click Pending", body: "Open the Pending group (Scan Submission · Pending Outbound · Pending Classification). It opens on Scan Submission.",
     selector: '#tabs-outreach .tab-parent[data-group="pending"]', placement: 'bottom', requireClick: true },
-  { title: "What you see here", body: "Every draft email is queued here for your review before it sends.",
+  { title: "What you see here", body: "Scan-submission acks are queued here for your review before they send.",
     selector: '#panel-outbound', placement: 'top' },
   { title: "Pan number first", body: "Each row leads with the Pan number. Case number sits underneath in smaller text.",
     selector: '#panel-outbound .item .case-id-block', placement: 'right',
@@ -4699,7 +4764,7 @@ const TOUR_STEPS = [
       if (first && !first.classList.contains('expanded')) first.classList.add('expanded');
     } },
 
-  { title: "Click Pending Replies", body: "Switch to the Replies sub-tab.",
+  { title: "Click Pending Classification", body: "Switch to the Pending Classification sub-tab.",
     selector: '#subtabs-pending .subtab[data-tab="inbound"]', placement: 'bottom', requireClick: true,
     beforeShow: () => { if (!document.querySelector('#tabs-outreach .tab-parent.active')) activateOutreachTab('outbound'); } },
   { title: "Suggested classification", body: "Each reply comes in with a suggested classification. Confirm or override with one click.",
