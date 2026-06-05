@@ -132,6 +132,42 @@
     font-size: 10px; font-weight: 800;
     letter-spacing: 1.5px; text-transform: uppercase;
   }
+  /* ---- Landing page (boot home; one card per mode the role can open) ---- */
+  .landing-head { margin-bottom: 6px; }
+  .landing-head h2 {
+    font-family: var(--font-serif); font-size: 26px; font-weight: 600;
+    color: var(--navy); margin-bottom: 4px;
+  }
+  .landing-head .sub { color: var(--slate); font-size: 14px; }
+  .landing-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px; margin-top: 22px;
+  }
+  .landing-card {
+    display: flex; align-items: flex-start; gap: 14px;
+    background: var(--white); border: 1px solid var(--slate-light);
+    border-radius: 12px; padding: 18px 18px;
+    cursor: pointer; text-align: left;
+    transition: border-color .15s, box-shadow .15s, transform .1s;
+  }
+  .landing-card:hover {
+    border-color: var(--blue-soft);
+    box-shadow: 0 6px 20px rgba(8,32,48,0.10);
+    transform: translateY(-2px);
+  }
+  .landing-card .lc-mark {
+    flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-serif); font-weight: 700; font-size: 19px;
+    color: var(--white); background: var(--blue);
+  }
+  .landing-card .lc-mark.gold { background: var(--gold); }
+  .landing-card .lc-info .name {
+    display: block; font-weight: 700; font-size: 15px; color: var(--navy);
+    margin-bottom: 3px;
+  }
+  .landing-card .lc-info .desc { color: var(--slate); font-size: 12.5px; line-height: 1.45; }
+  .landing-empty { color: var(--slate); font-size: 14px; margin-top: 24px; }
   .mark {
     width: 48px; height: 48px;
     background: url('/skdla_logo.png') no-repeat center / contain;
@@ -3297,6 +3333,14 @@
     <span class="chevron">▼</span>
     <div class="app-switcher" onclick="event.stopPropagation()">
       <div class="header">Spectrum Killian Apps</div>
+      <div class="app-item" data-mode="landing" onclick="switchMode('landing'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark cc"></div>
+        <div class="app-info">
+          <span class="name">Home</span>
+          <span class="desc">All the apps your role can open</span>
+        </div>
+        <span id="check-landing" class="check" style="display:none;">✓</span>
+      </div>
       <div class="app-item" data-mode="lookup" onclick="switchMode('lookup'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
         <div class="app-info">
@@ -3573,6 +3617,8 @@
   </div>
   <div id="resched-list" style="margin-top: 6px;"></div>
 </div>
+
+<div class="panel hidden" id="panel-landing"></div>
 
 <div class="panel hidden" id="panel-lookup">
   <h2>Case Lookup <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  every communication on a case, in order</span></h2>

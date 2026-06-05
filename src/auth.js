@@ -30,6 +30,8 @@ export const ROLE_OPTIONS = [
   { value: 'scanning',         label: 'Scanning' },
   // QC mode-only role.
   { value: 'qc_tech',          label: 'QC Tech' },
+  // Case Lookup-only role.
+  { value: 'ninja',            label: 'Ninja' },
 ];
 
 let currentUser = null;
