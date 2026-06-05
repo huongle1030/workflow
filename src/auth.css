@@ -14,19 +14,28 @@
 }
 
 .auth-card {
-  background: #FFFFFF;
+  background: #0A2C42;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
   padding: 40px 36px 32px;
   width: min(440px, 100%);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
   text-align: center;
 }
 
 .auth-logo {
-  width: 195px;
-  height: 38px;
-  margin: 0 auto 12px;
-  background: url('/logos/clearpath-black.png') no-repeat center / contain;
+  width: 224px;
+  height: 44px;
+  margin: 0 auto 16px;
+  background: url('/logos/clearpath-white.png') no-repeat center / contain;
+}
+
+/* Spectrum Killian (SKDLA) endorsement — white, on the dark card */
+.auth-sk {
+  display: block;
+  height: 72px;
+  width: auto;
+  margin: 0 auto 24px;
 }
 
 .auth-brand {
@@ -61,15 +70,15 @@
 
 .auth-card h2 {
   font-family: 'Lora', Georgia, serif;
-  font-size: 24px;
+  font-size: 29px;
   font-weight: 600;
-  color: #052030;
+  color: #EAF3F9;
   margin-bottom: 8px;
 }
 
 .auth-sub {
   font-size: 13px;
-  color: #6B7785;
+  color: #A7C3D6;
   line-height: 1.5;
   margin-bottom: 22px;
 }
@@ -80,7 +89,7 @@
   font-weight: 800;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: #6B7785;
+  color: #A7C3D6;
   margin: 18px 0 6px;
   text-align: left;
 }
@@ -88,19 +97,20 @@
 .auth-select {
   width: 100%;
   padding: 11px 14px;
-  background: #EFF6FB;
-  border: 1px solid #D5E4ED;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px;
   font-size: 14px;
   font-family: inherit;
-  color: #1F2937;
+  color: #EAF3F9;
   margin-bottom: 8px;
   cursor: pointer;
 }
+.auth-select option { color: #1F2937; }
 .auth-select:focus {
   outline: none;
-  border-color: #1882C7;
-  background: #FFFFFF;
+  border-color: #4ABEEE;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .auth-btn {
@@ -140,12 +150,12 @@
 }
 
 .auth-btn-ms {
-  background: #2F2F2F;
-  color: #FFFFFF;
+  background: #FFFFFF;
+  color: #1F2937;
 }
 .auth-btn-ms:hover:not(:disabled) {
-  background: #1F1F1F;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  background: #EEF1F5;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
 /* Microsoft 4-square logo */
@@ -163,7 +173,7 @@
 .auth-link {
   background: transparent;
   border: none;
-  color: #6B7785;
+  color: #A7C3D6;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.5px;
@@ -173,7 +183,7 @@
   font-family: inherit;
 }
 .auth-link:hover {
-  color: #052030;
+  color: #FFFFFF;
   text-decoration: underline;
 }
 

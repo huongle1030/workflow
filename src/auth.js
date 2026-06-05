@@ -170,7 +170,14 @@ export async function signOut(message) {
   // the click Event — only treat an actual string as a login-screen message.
   const reason = typeof message === 'string' ? message : undefined;
   stopIdleTimer();
-  await supabase.auth.signOut();
+  // Always clear the local session and return to the sign-in screen, even if the
+  // server-side revoke fails/hangs (otherwise the user is stranded on the current
+  // screen). `scope:'local'` guarantees the local session is dropped immediately.
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch (e) {
+    console.error('[auth] signOut failed (continuing to login screen):', e);
+  }
   currentUser = null;
   currentEmployee = null;
   clearAuthHashFromUrl();
