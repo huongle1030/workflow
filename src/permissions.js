@@ -62,7 +62,10 @@ export const CAPABILITIES = {
   TAB_INBOUND:      'tab.inbound',     // Pending Replies  (data-tab="inbound")
   TAB_READY:        'tab.ready',       // Ready for Approval (data-tab="ready")
   TAB_RESCHEDULE:   'tab.reschedule',  // Reschedule       (data-tab="reschedule")
-  TAB_LOOKUP:       'tab.lookup',      // Case Lookup      (data-tab="lookup")
+  // NOTE: Case Lookup is no longer an outreach tab — it is its own top-level mode
+  // (brand-switcher app `lookup`) available to EVERY role. It is intentionally
+  // ungated: it has no capability here and no MODE_CAP entry in main.js, so
+  // isModePermitted('lookup') is always true. See switchMode/MODE_ORDER.
   TAB_AUDIT:        'tab.audit',       // Audit            (data-tab="audit")
   TAB_EDITLOG:      'tab.editlog',     // Edit Log         (data-tab="editlog")
   METRICS:          'metrics',         // KPI strip + Metrics modal button
@@ -106,7 +109,6 @@ const DESIGN_APPROVER_CAPS = [
   C.TAB_INBOUND,
   C.TAB_READY,
   C.TAB_RESCHEDULE,
-  C.TAB_LOOKUP,
   // NOT outbound.revenue, audit, editlog, or metrics.
   // NOT any CaseFlow mode: Data Entry, Case Review, Scanning, Design Team, and
   // Quality Control are all hidden from design_approver (outreach + CC only).
@@ -121,7 +123,6 @@ const ENTRY_DA_CAPS = [
   C.TAB_SUBMIT,
   C.TAB_READY,
   C.TAB_RESCHEDULE,
-  C.TAB_LOOKUP,
 ];
 
 // Data Entry = Design Approvals access + Data Entry CaseFlow tab only.
