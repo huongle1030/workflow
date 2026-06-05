@@ -289,7 +289,6 @@
     font-size: 10px; font-weight: 800; letter-spacing: 1.2px;
     text-transform: uppercase; margin-left: 6px;
   }
-  .triage-chip.unsure    { background: #FBF3DC; color: var(--gold, #8E6510); }
   .triage-chip.confirmed { background: #DDF4E4; color: #1B8A3E; }
 
   /* KPI strip (above tabs) — kept tight so case cards come into view sooner */
@@ -3420,9 +3419,9 @@
 </div>
 
 <div class="subtabs" id="subtabs-pending">
-  <div class="tab subtab active" data-tab="outbound">Pending Outbound <span class="badge" id="badge-out">–</span></div>
-  <div class="tab subtab" data-tab="approval">Pending Approval <span class="badge" id="badge-approval">–</span></div>
-  <div class="tab subtab" data-tab="inbound">Pending Replies <span class="badge" id="badge-in">–</span></div>
+  <div class="tab subtab active" data-tab="outbound">Scan Submission <span class="badge" id="badge-out">–</span></div>
+  <div class="tab subtab" data-tab="approval">Pending Outbound <span class="badge" id="badge-approval">–</span></div>
+  <div class="tab subtab" data-tab="inbound">Pending Classification <span class="badge" id="badge-in">–</span></div>
 </div>
 
 <div class="subtabs hidden" id="subtabs-actions">
@@ -3458,12 +3457,12 @@
     <input type="text" id="global-search" placeholder="Search by case number, patient, practice, or doctor email…"
            oninput="onGlobalSearch(this.value)" autocomplete="off" />
     <button class="clear-btn" onclick="clearGlobalSearch()" aria-label="Clear search">×</button>
-    <span class="scope-hint" id="global-search-scope">Pending Outbound</span>
+    <span class="scope-hint" id="global-search-scope">Scan Submission</span>
   </div>
 </div>
 
 <div class="panel" id="panel-outbound">
-  <h2>Pending Outbound <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  drafts awaiting your review</span></h2>
+  <h2>Scan Submission <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  scan-submission acks awaiting your review</span></h2>
   <div class="outbound-toolbar">
     <div class="toolbar-left">
       <label class="toolbar-label">Sort by</label>
@@ -3508,7 +3507,7 @@
 </div>
 
 <div class="panel hidden" id="panel-approval">
-  <h2>Pending Approval <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  we've already reached the doctor since this draft — awaiting their approval</span></h2>
+  <h2>Pending Outbound <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  doctor design-approval cases — awaiting their approval</span></h2>
   <div class="outbound-count" id="approval-count"></div>
   <div id="list-approval"><div class="loading">Loading…</div></div>
 </div>
@@ -3520,7 +3519,7 @@
 </div>
 
 <div class="panel hidden" id="panel-inbound">
-  <h2>Pending Replies <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  doctor responses awaiting confirmation</span></h2>
+  <h2>Pending Classification <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  doctor responses awaiting confirmation</span></h2>
   <div class="inbound-toolbar">
     <div class="filter-chips">
       <label class="toolbar-label">Status</label>
@@ -3554,7 +3553,7 @@
       </button>
       <div class="hidden-senders-pop" id="hidden-senders-pop">
         <div class="hsp-head">Hide senders from this view</div>
-        <div class="hsp-sub">Add an email address (or a domain like <code>@wetransfer.com</code>) to suppress its messages from Pending Replies.</div>
+        <div class="hsp-sub">Add an email address (or a domain like <code>@wetransfer.com</code>) to suppress its messages from Pending Classification.</div>
         <div class="hsp-input-row">
           <input type="text" id="hsp-input" placeholder="noreply@example.com or @example.com" autocomplete="off"
                  onkeydown="if(event.key==='Enter'){addHiddenSender();event.preventDefault();}" />
