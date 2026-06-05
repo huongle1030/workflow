@@ -2884,6 +2884,13 @@ function firstPermittedMode() {
   return MODE_ORDER.find(isModePermitted) || 'outreach';
 }
 
+// Update the current-mode label shown in the sub-header switcher. The main
+// header title ("Workflow Module") is fixed; only this sub-bar chip changes.
+function setModeLabel(text) {
+  const el = document.getElementById('mode-current');
+  if (el) el.textContent = text;
+}
+
 function switchMode(mode) {
   // Guard: never enter a mode the role lacks — fall back to its first permitted
   // mode. Covers a stale localStorage value or an onclick on a hidden item.
@@ -2892,8 +2899,13 @@ function switchMode(mode) {
   localStorage.setItem('skdla_mode', mode);
   const cf = CASEFLOW_MODES[mode];
 
-  // Show only the active mode's tab row.
-  const activeTabRow = mode === 'outreach' ? 'tabs-outreach' : mode === 'cc' ? 'tabs-cc' : (cf ? cf.tabs : null);
+  // Show only the active mode's tab row. The CaseFlow production modes
+  // (Data Entry / Case Review / Scanning / Design Team) render their own
+  // in-panel header, so their single-label tab row is suppressed (QC keeps its).
+  const NO_TABROW_MODES = ['dataentry', 'casereview', 'scanning', 'design'];
+  const activeTabRow = mode === 'outreach' ? 'tabs-outreach'
+    : mode === 'cc' ? 'tabs-cc'
+    : (cf && !NO_TABROW_MODES.includes(mode)) ? cf.tabs : null;
   ALL_MODE_TABROWS.forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', id !== activeTabRow); });
   // The sub-nav rows belong to the outreach app; hide them outside outreach mode.
   if (mode !== 'outreach') {
@@ -2913,31 +2925,26 @@ function switchMode(mode) {
   if (mode === 'landing') {
     document.getElementById('panel-landing').classList.remove('hidden');
     renderLanding();
-    document.querySelector('.brand-text .name').textContent = 'Home';
-    document.querySelector('.brand-text .sub').textContent = 'Spectrum Killian · Your apps';
+    setModeLabel('Home');
   } else if (mode === 'outreach') {
     // Land on the first tab this role can see; activateOutreachTab handles the
     // Pending parent + sub-nav. (e.g. data_entry lands on Submit.)
     activateOutreachTab(firstPermittedOutreachTab());
-    document.querySelector('.brand-text .sub').textContent = 'Spectrum Killian · Coordinator Inbox';
-    document.querySelector('.brand-text .name').textContent = 'Design Approvals';
+    setModeLabel('Design Approvals');
   } else if (mode === 'cc') {
     document.getElementById('panel-cc-dashboard').classList.remove('hidden');
     document.querySelector('#tabs-cc .tab[data-cc-tab="dashboard"]').classList.add('active');
-    document.querySelector('.brand-text .sub').textContent = 'Case Coordination · Workflow + Logs';
-    document.querySelector('.brand-text .name').textContent = 'Case Coordination';
+    setModeLabel('Case Coordination');
     ensureCcDataLoaded();
   } else if (mode === 'lookup') {
     document.getElementById('panel-lookup').classList.remove('hidden');
-    document.querySelector('.brand-text .name').textContent = 'Case Lookup';
-    document.querySelector('.brand-text .sub').textContent = 'Every communication on a case, in order';
+    setModeLabel('Case Lookup');
     // Empty state: show the informational legend until a case is looked up.
     const r = document.getElementById('lookup-result');
     if (r && !r.innerHTML.trim()) r.innerHTML = caseLookupLegendHtml(false);
   } else if (cf) {
     document.getElementById('panel-' + mode).classList.remove('hidden');
-    document.querySelector('.brand-text .name').textContent = cf.name;
-    document.querySelector('.brand-text .sub').textContent = cf.sub;
+    setModeLabel(cf.name);
     // Quality Control is its own module (src/qc/app.js), not a CaseFlow queue.
     if (mode === 'qc') {
       if (window.QCMODE && window.QCMODE.renderQcMode) window.QCMODE.renderQcMode();
@@ -2945,6 +2952,11 @@ function switchMode(mode) {
       window.CF.renderCaseFlowMode(mode);
     }
   }
+  // The sub-header bar (mode switcher + actions + status) is always visible,
+  // regardless of mode. (Clear any stale inline hide from earlier builds.)
+  const subbar = document.querySelector('.subbar');
+  if (subbar) subbar.style.display = '';
+
   // The KPI strip + search bar are scoped to the outreach app.
   const kpiStrip = document.getElementById('kpi-strip');
   const searchRow = document.getElementById('global-search-row');
@@ -2966,14 +2978,13 @@ function renderLanding() {
   const modes = LANDING_ORDER.filter(isModePermitted);
   const cards = modes.map(mode => {
     const meta = MODE_META[mode] || { name: mode, desc: '' };
-    const initial = esc(meta.name.charAt(0).toUpperCase());
     return `
       <button type="button" class="landing-card" onclick="switchMode('${mode}')">
-        <span class="lc-mark${meta.gold ? ' gold' : ''}">${initial}</span>
         <span class="lc-info">
           <span class="name">${esc(meta.name)}</span>
           <span class="desc">${esc(meta.desc)}</span>
         </span>
+        <span class="lc-go" aria-hidden="true">→</span>
       </button>`;
   }).join('');
 
@@ -2983,8 +2994,9 @@ function renderLanding() {
 
   panel.innerHTML = `
     <div class="landing-head">
-      <h2>${first ? 'Welcome, ' + esc(first) : 'Welcome'}</h2>
-      <span class="sub">${roleLabel ? esc(roleLabel) + ' · choose an app to get started' : 'Choose an app to get started'}</span>
+      <span class="landing-eyebrow"><span class="pulse"></span>ClearPath OS · Lab Management System</span>
+      <h2>${first ? 'Welcome back, <span class="acc">' + esc(first) + '</span>' : 'Welcome to <span class="acc">ClearPath OS</span>'}</h2>
+      <span class="sub">${roleLabel ? 'Signed in as ' + esc(roleLabel) + ' - choose a tab to get started.' : 'Choose a tab to get started.'}</span>
     </div>
     ${grid}`;
 }
@@ -3777,21 +3789,24 @@ async function ensureCcDataLoaded() {
 }
 
 async function reloadCcData() {
-  let [cases, logs, coords, prefs] = [null, null, null, null];
+  let [cases, logs, coords, prefs, emps] = [null, null, null, null, null];
   if (inCowork) {
     cases  = await runMcpSql('SELECT * FROM "Case"        ORDER BY updated_date DESC NULLS LAST LIMIT 500');
     logs   = await runMcpSql('SELECT * FROM "CaseLog"     ORDER BY log_date DESC NULLS LAST, created_date DESC NULLS LAST LIMIT 5000');
     coords = await runMcpSql('SELECT * FROM "Coordinator" ORDER BY name LIMIT 200');
     prefs  = await runMcpSql('SELECT * FROM v_account_preferences ORDER BY practice_name LIMIT 2000');
+    emps   = await runMcpSql('SELECT name, email, role FROM employees WHERE active = true');
   } else {
     cases  = await restGet('/rest/v1/Case?select=*&order=updated_date.desc.nullslast&limit=500');
     logs   = await restGet('/rest/v1/CaseLog?select=*&order=log_date.desc.nullslast,created_date.desc.nullslast&limit=5000');
     coords = await restGet('/rest/v1/Coordinator?select=*&order=name&limit=200');
     prefs  = await restGet('/rest/v1/v_account_preferences?select=*&order=practice_name&limit=2000');
+    emps   = await restGet('/rest/v1/employees?select=name,email,role&active=eq.true');
   }
   ccData.cases = cases || [];
   ccData.logs  = logs  || [];
   ccData.coordinators = coords || [];
+  ccData.employees = emps || [];
   ccData.preferences = prefs || [];
   ccLoaded = true;
   populateCcFilters();
@@ -3858,6 +3873,46 @@ function getFilteredLogs() {
   });
 }
 
+// Full per-stage case lists for the current dashboard render, keyed by slug.
+// Populated by renderDashboard; read by openStageModal.
+let ccStatusBoard = {};
+
+// One case tile for the status board / stage modal: case #, optional hold badge,
+// patient name, and the coordinator · date meta line.
+function ccCaseTileHtml(c) {
+  const pname = c.patient_name || '';
+  const holdBadge = c.hold_duration
+    ? '<span style="background:#A5DDB6;color:#1A5C2A;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px;">' + esc(c.hold_duration) + '</span>'
+    : '';
+  return '<div class="case-row">' +
+      '<span class="cnum">' + esc(c.case_id) + '</span>' +
+      holdBadge +
+      (pname ? ' <span class="pname">·' + esc(pname) + '</span>' : '') +
+      '<div class="meta">' + esc(c.coordinator || '-') + ' · ' + esc((c.stage_updated_date || '').slice(5).replace('-','/')) + '</div>' +
+  '</div>';
+}
+
+// Open the stage modal showing EVERY case in a status column (tile format).
+function openStageModal(slug) {
+  const entry = ccStatusBoard[slug];
+  if (!entry) return;
+  const modal = document.getElementById('cc-stage-modal');
+  const titleEl = document.getElementById('cc-stage-modal-title');
+  const countEl = document.getElementById('cc-stage-modal-count');
+  const body = document.getElementById('cc-stage-modal-body');
+  if (titleEl) titleEl.textContent = entry.stage;
+  if (countEl) countEl.textContent = entry.list.length;
+  if (body) {
+    body.className = 'modal-body cc-stage-grid cc-stage-' + slug;
+    body.innerHTML = entry.list.map(ccCaseTileHtml).join('');
+  }
+  if (modal) modal.classList.add('open');
+}
+
+function closeStageModal() {
+  document.getElementById('cc-stage-modal')?.classList.remove('open');
+}
+
 function renderDashboard() {
   if (!ccLoaded) return;
   const filtered = getFilteredLogs();
@@ -3889,23 +3944,20 @@ function renderDashboard() {
   });
 
   const board = document.getElementById('cc-status-board');
+  // Cache each stage's FULL case list (keyed by slug) so the "+N more" link can
+  // pop a modal listing every case in that stage. Reset on each render.
+  ccStatusBoard = {};
   if (Object.keys(byStage).length === 0) {
     board.innerHTML = '<div class="empty">No cases for ' + targetDate + '.</div>';
   } else {
     board.innerHTML = '<div class="cc-status-grid">' +
       Object.entries(byStage).sort((a,b) => b[1].length - a[1].length).map(([stage, list]) => {
         const slug = stage.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-        const cells = list.slice(0, 4).map(c => {
-          const pname = c.patient_name || '';
-          const holdBadge = c.hold_duration ? '<span style="background:#A5DDB6;color:#1A5C2A;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px;">' + esc(c.hold_duration) + '</span>' : '';
-        return '<div class="case-row">' +
-            '<span class="cnum">' + esc(c.case_id) + '</span>' +
-            holdBadge +
-            (pname ? ' <span class="pname">·' + esc(pname) + '</span>' : '') +
-            '<div class="meta">' + esc(c.coordinator || '-') + ' · ' + esc((c.stage_updated_date || '').slice(5).replace('-','/')) + '</div>' +
-        '</div>';
-        }).join('');
-        const more = list.length > 4 ? '<div class="meta" style="margin-top:4px;font-size:11px;color:var(--slate);">+' + (list.length - 4) + ' more</div>' : '';
+        ccStatusBoard[slug] = { stage, list };
+        const cells = list.slice(0, 4).map(ccCaseTileHtml).join('');
+        const more = list.length > 4
+          ? '<div class="cc-more-link" onclick="openStageModal(\'' + slug + '\')" role="button" tabindex="0">+' + (list.length - 4) + ' more</div>'
+          : '';
         return '<div class="cc-status-cell cc-stage-' + slug + '"><div class="head"><div class="stage">' + esc(stage) + '</div><div class="count">' + list.length + '</div></div>' + cells + more + '</div>';
       }).join('') + '</div>';
   }
@@ -4226,6 +4278,17 @@ async function deleteCaseFromTracker(caseId) {
   } catch (e) { toast('Delete failed: ' + (e.message || e), 'err'); }
 }
 
+// Look up a coordinator's sign-in role by matching their name to the employees
+// roster (case-insensitive). Returns the human label, or null if no match.
+function coordinatorRoleLabel(name) {
+  const emps = ccData.employees || [];
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return null;
+  const emp = emps.find(e => String(e.name || '').trim().toLowerCase() === key);
+  if (!emp || !emp.role) return null;
+  return ROLE_LABELS[emp.role] || emp.role;
+}
+
 function renderCoordinators() {
   if (!ccLoaded) return;
   const list = document.getElementById('cc-coord-list');
@@ -4233,10 +4296,26 @@ function renderCoordinators() {
     list.innerHTML = '<div class="empty">No coordinators yet.</div>';
     return;
   }
-  list.innerHTML = ccData.coordinators.map(c =>
-    '<div class="cc-coord-row"><span class="nm">' + esc(c.name) + '</span>' +
-    '<button class="cc-del" onclick="removeCoord(\'' + esc(c.id) + '\', \'' + esc(c.name) + '\')">Remove</button></div>'
-  ).join('');
+  list.innerHTML =
+    '<div class="cc-coord-grid">' +
+    ccData.coordinators.map(c => {
+      const role = coordinatorRoleLabel(c.name);
+      const initial = esc(String(c.name || '?').trim().charAt(0).toUpperCase() || '?');
+      return (
+        '<div class="cc-coord-card">' +
+          '<span class="ccc-mark">' + initial + '</span>' +
+          '<span class="ccc-info">' +
+            '<span class="ccc-name">' + esc(c.name) + '</span>' +
+            '<span class="ccc-role' + (role ? '' : ' none') + '">' +
+              (role ? esc(role) : 'No sign-in role on file') +
+            '</span>' +
+          '</span>' +
+          '<button class="ccc-del" title="Remove coordinator" ' +
+            'onclick="removeCoord(\'' + esc(c.id) + '\', \'' + esc(c.name) + '\')">Remove</button>' +
+        '</div>'
+      );
+    }).join('') +
+    '</div>';
 }
 
 function sqlVal(v) {
@@ -5533,6 +5612,7 @@ Object.assign(window, {
   setTrackerSubTab, addCaseToTracker,
   updateCaseInlineStage, updateCaseHoldDuration, deleteCaseFromTracker,
   renderDashboard, renderHistory, renderTracker, renderPrefsList,
+  openStageModal, closeStageModal,
   addCoordinator, removeCoord, selectPrefAcct, savePrefs, extractPrefsWithAI, bulkExtractPrefs,
   generatePrefSummaries,
   // Metrics modal

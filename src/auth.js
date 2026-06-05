@@ -59,12 +59,12 @@ function clearAuthHashFromUrl() {
 
 // ---- Inactivity auto-logout ----
 // Sign the user out after this many ms with no mouse/keyboard/touch activity.
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const IDLE_TIMEOUT_MS = 120 * 60 * 1000; // 120 minutes
 const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
 let idleTimerId = null;
 
 function onIdleTimeout() {
-  signOut('You were signed out after 5 minutes of inactivity.');
+  signOut('You were signed out after 120 minutes of inactivity.');
 }
 
 function resetIdleTimer() {
