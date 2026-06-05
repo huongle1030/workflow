@@ -34,6 +34,9 @@ export const ROLES = {
   // QC mode-only role. Sees ONLY the Quality Control mode — no outreach, no
   // case coordination, no other CaseFlow modes.
   QC_TECH:           'qc_tech',
+  // Case Lookup-only role. Holds NO capabilities, so every gated mode is hidden;
+  // the only mode it can reach is the ungated Case Lookup (see ROLE_CAPABILITIES).
+  NINJA:             'ninja',
 };
 
 
@@ -50,6 +53,7 @@ export const ROLE_LABELS = {
   [ROLES.DESIGNER]:          'Designer',
   [ROLES.SCANNING]:          'Scanning',
   [ROLES.QC_TECH]:           'QC Tech',
+  [ROLES.NINJA]:             'Ninja',
 };
 
 // ---- Capability keys ----
@@ -138,6 +142,10 @@ const SCANNING_CAPS    = [C.CASEFLOW_SCAN];
 // QC Tech sees ONLY the Quality Control mode. The full-access roles also get
 // CASEFLOW_QC automatically via ALL_CAPS (Object.values(CAPABILITIES)).
 const QC_TECH_CAPS     = [C.CASEFLOW_QC];
+// Ninja sees ONLY Case Lookup. Lookup is ungated (no cap / no MODE_CAP entry), so
+// an empty cap set hides every other mode while firstPermittedMode() falls through
+// to 'lookup'. Do NOT add caps here or other modes will become visible.
+const NINJA_CAPS       = [];
 
 // Full capability set — account_manager and above see the whole app, EXCEPT
 // restricted capabilities (granted explicitly per role below).
@@ -162,6 +170,8 @@ export const ROLE_CAPABILITIES = {
   [ROLES.DESIGNER]:        new Set(DESIGNER_CAPS),
   [ROLES.SCANNING]:        new Set(SCANNING_CAPS),
   [ROLES.QC_TECH]:         new Set(QC_TECH_CAPS),
+  // Case Lookup-only role — empty cap set; only the ungated Case Lookup is reachable.
+  [ROLES.NINJA]:           new Set(NINJA_CAPS),
 };
 
 // Returns the current signed-in employee's role string, or null if unknown.

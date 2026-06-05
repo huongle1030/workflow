@@ -2812,6 +2812,10 @@ const CC_PANELS       = ['cc-dashboard','cc-newlog','cc-history','cc-tracker','c
 // Case Lookup is its own top-level mode (single panel `panel-lookup`, no tab row),
 // available to every role. See switchMode's `lookup` branch.
 const LOOKUP_PANELS   = ['lookup'];
+// Landing/home mode: a single panel (`panel-landing`, no tab row) that shows one
+// card per mode the signed-in role may open. Ungated (every role boots here).
+// Rendered by renderLanding(); see switchMode's `landing` branch.
+const LANDING_PANELS  = ['landing'];
 // CaseFlow production modes — each is a single panel (id `panel-<mode>`) rendered
 // by src/caseflow/app.js. See PRD_caseflow_4_modes.md.
 // `qc` is a single panel (id `panel-qc`) rendered by src/qc/app.js (Quality
@@ -2825,7 +2829,23 @@ const CASEFLOW_MODES = {
   qc:         { tabs: 'tabs-qc',         name: 'Quality Control', sub: 'Log QC rejects & internal remakes' },
 };
 const ALL_MODE_TABROWS = ['tabs-outreach','tabs-cc','tabs-dataentry','tabs-casereview','tabs-scanning','tabs-design','tabs-qc'];
-const ALL_MODE_CHECKS  = ['check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design','check-qc','check-lookup'];
+const ALL_MODE_CHECKS  = ['check-landing','check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design','check-qc','check-lookup'];
+
+// Display metadata for every navigable mode (name + one-line description), used to
+// build the landing-page cards. Mirrors the brand-switcher copy in index.html.
+// `gold` flags the outreach app so its card mark matches its switcher accent.
+const MODE_META = {
+  lookup:     { name: 'Case Lookup',      desc: 'Every communication on a case, in order' },
+  cc:         { name: 'Case Coordination', desc: 'Case workflow board · stage tracking, logs, coordinators' },
+  dataentry:  { name: 'Data Entry',       desc: 'Enter case information + AOX checklist, route to review' },
+  casereview: { name: 'Case Review',      desc: 'AOX review checklist + route to design or scanning' },
+  scanning:   { name: 'Scanning',         desc: 'Upload scan files, pass to the design team' },
+  design:     { name: 'Design Team',      desc: 'Design checklist, QC, outsourcing, ZIP export' },
+  outreach:   { name: 'Design Approvals', desc: 'Coordinator inbox · doctor outreach automation', gold: true },
+  qc:         { name: 'Quality Control',  desc: 'Log QC rejects & internal remakes' },
+};
+// Visual order of the landing-page cards (mirrors the brand-switcher item order).
+const LANDING_ORDER = ['lookup','cc','dataentry','casereview','scanning','design','outreach','qc'];
 
 // Mode (brand-switcher app) -> capability that gates it. Outreach and Case
 // Coordination are whole apps; the four CaseFlow modes each have their own cap.
@@ -2847,8 +2867,9 @@ const MODE_CAP = {
 // Lookup · CC · Data Entry · Case Review · Scanning · Design · Design Approvals ·
 // QC). Keep `outreach` first so coordinators still land on the inbox, and
 // `lookup` LAST so the ungated Case Lookup never becomes any role's landing mode.
-// NOTE: a dedicated landing page (boot target for all roles) is planned — when it
-// lands, revisit firstPermittedMode()/this list.
+// NOTE: all roles now BOOT into the dedicated `landing` home page (see boot() and
+// renderLanding); this list is only the fallback used by firstPermittedMode() when
+// a role is bounced out of a forbidden mode, so `landing` is intentionally absent.
 const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design','qc','lookup'];
 
 // True if the current role may enter this mode.
@@ -2880,8 +2901,8 @@ function switchMode(mode) {
     document.getElementById('subtabs-actions')?.classList.add('hidden');
   }
 
-  // Hide all panels (outreach + cc + caseflow + lookup) then show the default for this mode.
-  [...OUTREACH_PANELS, ...CC_PANELS, ...CASEFLOW_PANELS, ...LOOKUP_PANELS].forEach(p =>
+  // Hide all panels (landing + outreach + cc + caseflow + lookup) then show the default for this mode.
+  [...LANDING_PANELS, ...OUTREACH_PANELS, ...CC_PANELS, ...CASEFLOW_PANELS, ...LOOKUP_PANELS].forEach(p =>
     document.getElementById('panel-' + p)?.classList.add('hidden'));
   document.querySelectorAll('#tabs-outreach .tab, #tabs-cc .tab').forEach(t => t.classList.remove('active'));
 
@@ -2889,7 +2910,12 @@ function switchMode(mode) {
   ALL_MODE_CHECKS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
   const chk = document.getElementById('check-' + mode); if (chk) chk.style.display = 'inline';
 
-  if (mode === 'outreach') {
+  if (mode === 'landing') {
+    document.getElementById('panel-landing').classList.remove('hidden');
+    renderLanding();
+    document.querySelector('.brand-text .name').textContent = 'Home';
+    document.querySelector('.brand-text .sub').textContent = 'Spectrum Killian · Your apps';
+  } else if (mode === 'outreach') {
     // Land on the first tab this role can see; activateOutreachTab handles the
     // Pending parent + sub-nav. (e.g. data_entry lands on Submit.)
     activateOutreachTab(firstPermittedOutreachTab());
@@ -2925,6 +2951,42 @@ function switchMode(mode) {
   if (kpiStrip)  kpiStrip.style.display  = (mode === 'outreach' && can(CAPABILITIES.METRICS)) ? '' : 'none';
   if (searchRow) searchRow.style.display = (mode === 'outreach') ? '' : 'none';
   if (mode === 'outreach' && typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
+}
+
+// Render the landing/home panel: one clickable card per mode the signed-in role
+// may open (filtered by isModePermitted), in LANDING_ORDER. The only thing on the
+// page is the set of apps the role can navigate to — clicking a card enters it.
+function renderLanding() {
+  const panel = document.getElementById('panel-landing');
+  if (!panel) return;
+  const emp = getCurrentEmployee();
+  const first = emp && emp.name ? String(emp.name).trim().split(/\s+/)[0] : '';
+  const roleLabel = emp && emp.role ? (ROLE_LABELS[emp.role] || emp.role) : '';
+
+  const modes = LANDING_ORDER.filter(isModePermitted);
+  const cards = modes.map(mode => {
+    const meta = MODE_META[mode] || { name: mode, desc: '' };
+    const initial = esc(meta.name.charAt(0).toUpperCase());
+    return `
+      <button type="button" class="landing-card" onclick="switchMode('${mode}')">
+        <span class="lc-mark${meta.gold ? ' gold' : ''}">${initial}</span>
+        <span class="lc-info">
+          <span class="name">${esc(meta.name)}</span>
+          <span class="desc">${esc(meta.desc)}</span>
+        </span>
+      </button>`;
+  }).join('');
+
+  const grid = cards
+    ? `<div class="landing-grid">${cards}</div>`
+    : `<p class="landing-empty">No apps are available for your role yet. Contact an administrator.</p>`;
+
+  panel.innerHTML = `
+    <div class="landing-head">
+      <h2>${first ? 'Welcome, ' + esc(first) : 'Welcome'}</h2>
+      <span class="sub">${roleLabel ? esc(roleLabel) + ' · choose an app to get started' : 'Choose an app to get started'}</span>
+    </div>
+    ${grid}`;
 }
 
 // =====================================================================
@@ -5022,12 +5084,14 @@ function boot() {
   // Show the hidden-sender count chip immediately, even before data loads
   if (typeof renderHiddenSendersList === 'function') renderHiddenSendersList();
 
-  // Restore the last-used mode (outreach, case coordination, or a CaseFlow mode)
-  const VALID_MODES = ['outreach', 'cc', 'dataentry', 'casereview', 'scanning', 'design'];
-  switchMode(VALID_MODES.includes(currentMode) ? currentMode : 'outreach');
+  // Every role boots into the landing/home page (one card per app the role can
+  // open). They pick an app from there; the brand switcher still lets them jump
+  // directly or return Home. (Ungated — isModePermitted('landing') is always true.)
+  switchMode('landing');
 
-  // Hide tabs/controls this role isn't allowed to see, and land on a permitted
-  // tab. Runs after switchMode so it can correct the active tab if needed.
+  // Hide modes/tabs this role isn't allowed to see. Runs after switchMode so the
+  // switcher items + outreach tabs reflect the role. landing stays visible (it has
+  // no cap and isn't in MODE_ORDER, so applyPermissions never hides it).
   applyPermissions();
 
   // First-time visitors get the tour automatically (after the panels settle)
