@@ -30,12 +30,14 @@
   background: url('/logos/clearpath-white.png') no-repeat center / contain;
 }
 
-/* Spectrum Killian (SKDLA) endorsement — white, on the dark card */
+/* Spectrum Killian (SKDLA) endorsement — white, on the dark card.
+   Rendered as a CSS background (like .auth-logo) rather than an <img>, which
+   some endpoint-security/extension setups block while leaving CSS fetches alone. */
 .auth-sk {
-  display: block;
   height: 72px;
-  width: auto;
+  width: 80px;
   margin: 0 auto 24px;
+  background: url('/logos/spectrum-killian-stacked-white.png') no-repeat center / contain;
 }
 
 .auth-brand {

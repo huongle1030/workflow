@@ -30,7 +30,7 @@ function authCard(innerHtml) {
   return `
     <div class="auth-card">
       <div class="auth-logo"></div>
-      <img class="auth-sk" src="/logos/spectrum-killian-stacked-white.png" alt="Spectrum Killian" />
+      <div class="auth-sk" role="img" aria-label="Spectrum Killian"></div>
       ${innerHtml}
     </div>
   `;
