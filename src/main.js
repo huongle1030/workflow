@@ -720,7 +720,9 @@ async function loadOutbound() {
   state.outbound = visibleRows.filter(r => r.triage_bucket === 'outbound_only');
   state.approval  = visibleRows.filter(r => r.triage_bucket === 'pending_approval');
   document.getElementById('badge-out').textContent = state.outbound.length;
-  document.getElementById('stat-out').textContent = state.outbound.length;
+  // "Pending Out" KPI tile reflects the Pending Outbound sub-tab (pending_approval
+  // bucket), NOT the Scan Submission sub-tab (outbound_only bucket).
+  document.getElementById('stat-out').textContent = state.approval.length;
   const ba = document.getElementById('badge-approval');
   if (ba) ba.textContent = state.approval.length;
   updatePendingBadge();
@@ -1172,7 +1174,7 @@ function updateGlobalSearchScope() {
   };
   // Tabs without a meaningful global search: hide just the search bar
   // (the KPI strip above still shows on every tab)
-  const hideOn = ['submit', 'lookup', 'audit', 'editlog', 'feedback'];
+  const hideOn = ['submit', 'audit', 'editlog', 'feedback'];
   if (hideOn.includes(activeTab)) {
     searchRow.style.display = 'none';
     return;
@@ -1339,54 +1341,16 @@ function renderOutbound() {
     if (countEl) countEl.textContent = '';
     return;
   }
-  populatePartnerDropdown();
-  populateReasonDropdown();
-  // Refresh the custom Filter dropdown — button label + bubble counts on each option
-  const all = state.outbound || [];
-  const hasLink = (r) => !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
-  const counts = {
-    '':        all.length,
-    haslink:   all.filter(hasLink).length,
-    nolink:    all.filter(r => !hasLink(r)).length,
-    overdue:   all.filter(r => r.will_miss_due_date).length,
-    high:      all.filter(r => Number(r.case_revenue || 0) >= 5000).length,
-    mid:       all.filter(r => { const n = Number(r.case_revenue || 0); return n >= 2000 && n < 5000; }).length,
-    low:       all.filter(r => Number(r.case_revenue || 0) < 2000).length,
-  };
-  const current = outboundFilter.revenue || '';
-  // Button label + bubble
-  const btnLabelEl = document.getElementById('outbound-filter-label');
-  const btnCountEl = document.getElementById('outbound-filter-count');
-  const filterOptions = visibleOutboundFilterOptions();
-  const currentOpt = filterOptions.find(o => o.value === current) || filterOptions[0];
-  if (btnLabelEl) btnLabelEl.textContent = currentOpt.label;
-  if (btnCountEl) {
-    const c = counts[currentOpt.value] ?? 0;
-    btnCountEl.textContent = c;
-    btnCountEl.classList.toggle('zero', c === 0);
-  }
-  // Menu items
-  const menuEl = document.getElementById('outbound-filter-menu');
-  if (menuEl) {
-    menuEl.innerHTML = filterOptions.map(o => {
-      const c = counts[o.value] ?? 0;
-      const sel = o.value === current ? ' selected' : '';
-      const zero = c === 0 ? ' zero' : '';
-      return `<div class="custom-dd-option${sel}" role="option" data-value="${o.value}" onclick="setOutboundRevenue('${o.value}')">
-        <span>${o.label}</span>
-        <span class="chip-count${zero}">${c}</span>
-      </div>`;
-    }).join('');
-  }
+  // The Scan Submission sub-tab has no filter toolbar — show every scan-ack draft.
+  // The global search bar still narrows the list via outboundFilter.search.
   const filtered = sortedFilteredOutbound();
   if (countEl) {
-    const filterActive = outboundFilter.revenue !== '' || outboundFilter.partner !== '' || outboundFilter.reason !== '';
-    countEl.textContent = filterActive
+    countEl.textContent = (outboundFilter.search && filtered.length !== state.outbound.length)
       ? `Showing ${filtered.length} of ${state.outbound.length}`
       : `${state.outbound.length} total`;
   }
   if (!filtered.length) {
-    root.innerHTML = '<div class="empty"><strong>No drafts match this filter.</strong><br/>Click All to clear.</div>';
+    root.innerHTML = '<div class="empty"><strong>No drafts match your search.</strong><br/>Clear the search to see all.</div>';
     return;
   }
   root.innerHTML = filtered.map(renderOutboundCard).join('');
@@ -1668,10 +1632,10 @@ function renderOutboundCard(r) {
           <div class="subject">${esc(r.subject)}</div>
         </div>
         <div class="meta">
-          <div class="stamp attempt-${r.attempt_number}">Attempt ${r.attempt_number}</div>
-          <div>Proposed ${fmtDate(r.proposed_at)}</div>
+          ${isScanAck ? '' : `<div class="stamp attempt-${r.attempt_number}">Attempt ${r.attempt_number}</div>`}
+          <div>${isScanAck ? 'Received' : 'Proposed'} ${fmtDate(r.proposed_at)}</div>
           ${r.patient_name ? '<div>' + esc(r.patient_name) + '</div>' : ''}
-          <div class="meta-reason">${reasonChip}</div>
+          ${isScanAck ? '' : `<div class="meta-reason">${reasonChip}</div>`}
         </div>
       </div>
       <div class="item-body">
@@ -2843,8 +2807,11 @@ function closeSettings() {
 // =====================================================================
 let currentMode = localStorage.getItem('skdla_mode') || 'outreach';
 
-const OUTREACH_PANELS = ['outbound','approval','ready','inbound','audit','lookup','submit','reschedule','editlog','feedback'];
+const OUTREACH_PANELS = ['outbound','approval','ready','inbound','audit','submit','reschedule','editlog','feedback'];
 const CC_PANELS       = ['cc-dashboard','cc-newlog','cc-history','cc-tracker','cc-coordinators','cc-prefs'];
+// Case Lookup is its own top-level mode (single panel `panel-lookup`, no tab row),
+// available to every role. See switchMode's `lookup` branch.
+const LOOKUP_PANELS   = ['lookup'];
 // CaseFlow production modes — each is a single panel (id `panel-<mode>`) rendered
 // by src/caseflow/app.js. See PRD_caseflow_4_modes.md.
 // `qc` is a single panel (id `panel-qc`) rendered by src/qc/app.js (Quality
@@ -2858,7 +2825,7 @@ const CASEFLOW_MODES = {
   qc:         { tabs: 'tabs-qc',         name: 'Quality Control', sub: 'Log QC rejects & internal remakes' },
 };
 const ALL_MODE_TABROWS = ['tabs-outreach','tabs-cc','tabs-dataentry','tabs-casereview','tabs-scanning','tabs-design','tabs-qc'];
-const ALL_MODE_CHECKS  = ['check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design','check-qc'];
+const ALL_MODE_CHECKS  = ['check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design','check-qc','check-lookup'];
 
 // Mode (brand-switcher app) -> capability that gates it. Outreach and Case
 // Coordination are whole apps; the four CaseFlow modes each have their own cap.
@@ -2871,9 +2838,18 @@ const MODE_CAP = {
   scanning:   CAPABILITIES.CASEFLOW_SCAN,
   design:     CAPABILITIES.CASEFLOW_DESIGN,
   qc:         CAPABILITIES.CASEFLOW_QC,
+  // NOTE: `lookup` is intentionally absent — Case Lookup is ungated, so
+  // isModePermitted('lookup') returns true for every role (see below).
 };
-// Brand-switcher display order — also the search order for a role's landing mode.
-const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design','qc'];
+// Landing-mode PRIORITY order: firstPermittedMode() walks this list and a role
+// boots into the first mode it's allowed to open. This is intentionally NOT the
+// visual switcher order (that's the static app-item DOM order in index.html, now
+// Lookup · CC · Data Entry · Case Review · Scanning · Design · Design Approvals ·
+// QC). Keep `outreach` first so coordinators still land on the inbox, and
+// `lookup` LAST so the ungated Case Lookup never becomes any role's landing mode.
+// NOTE: a dedicated landing page (boot target for all roles) is planned — when it
+// lands, revisit firstPermittedMode()/this list.
+const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design','qc','lookup'];
 
 // True if the current role may enter this mode.
 function isModePermitted(mode) {
@@ -2904,8 +2880,8 @@ function switchMode(mode) {
     document.getElementById('subtabs-actions')?.classList.add('hidden');
   }
 
-  // Hide all panels (outreach + cc + caseflow) then show the default for this mode.
-  [...OUTREACH_PANELS, ...CC_PANELS, ...CASEFLOW_PANELS].forEach(p =>
+  // Hide all panels (outreach + cc + caseflow + lookup) then show the default for this mode.
+  [...OUTREACH_PANELS, ...CC_PANELS, ...CASEFLOW_PANELS, ...LOOKUP_PANELS].forEach(p =>
     document.getElementById('panel-' + p)?.classList.add('hidden'));
   document.querySelectorAll('#tabs-outreach .tab, #tabs-cc .tab').forEach(t => t.classList.remove('active'));
 
@@ -2925,6 +2901,13 @@ function switchMode(mode) {
     document.querySelector('.brand-text .sub').textContent = 'Case Coordination · Workflow + Logs';
     document.querySelector('.brand-text .name').textContent = 'Case Coordination';
     ensureCcDataLoaded();
+  } else if (mode === 'lookup') {
+    document.getElementById('panel-lookup').classList.remove('hidden');
+    document.querySelector('.brand-text .name').textContent = 'Case Lookup';
+    document.querySelector('.brand-text .sub').textContent = 'Every communication on a case, in order';
+    // Empty state: show the informational legend until a case is looked up.
+    const r = document.getElementById('lookup-result');
+    if (r && !r.innerHTML.trim()) r.innerHTML = caseLookupLegendHtml(false);
   } else if (cf) {
     document.getElementById('panel-' + mode).classList.remove('hidden');
     document.querySelector('.brand-text .name').textContent = cf.name;
@@ -2956,7 +2939,6 @@ const TAB_CAP = {
   inbound:    CAPABILITIES.TAB_INBOUND,
   ready:      CAPABILITIES.TAB_READY,
   reschedule: CAPABILITIES.TAB_RESCHEDULE,
-  lookup:     CAPABILITIES.TAB_LOOKUP,
   audit:      CAPABILITIES.TAB_AUDIT,
   editlog:    CAPABILITIES.TAB_EDITLOG,
 };
@@ -3014,11 +2996,6 @@ function runTabSideEffects(which) {
   if (which === 'approval') renderApproval();
   if (which === 'editlog') loadEditLog();
   if (which === 'feedback') loadFeedback();
-  // Case Lookup empty state: show the informational legend until a case loads.
-  if (which === 'lookup') {
-    const r = document.getElementById('lookup-result');
-    if (r && !r.innerHTML.trim()) r.innerHTML = caseLookupLegendHtml(false);
-  }
   if (typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
 }
 
@@ -3346,13 +3323,14 @@ function _normalizeCommRow(cc) {
   };
 }
 
-// Card shortcut: jump to the Case Lookup tab with a case prefilled and its
+// Card shortcut: jump to the Case Lookup mode with a case prefilled and its
 // timeline loaded. Wired to the "Lookup Case" button on Outbound / Approval /
-// Replies cards.
+// Replies cards. Case Lookup is its own mode now, so switch modes (works from
+// any mode the user is currently in — every role can open Case Lookup).
 function gotoCaseLookup(caseNumber) {
   const cn = String(caseNumber || '').trim();
   if (!cn) { toast('No case number on this card', 'err'); return; }
-  activateOutreachTab('lookup');
+  switchMode('lookup');
   const input = document.getElementById('lookup-input');
   if (input) input.value = cn;
   lookupCase();
@@ -3624,7 +3602,7 @@ function printCaseLookup() {
     : '–';
 
   const ordered = rows.slice().sort((a, b) =>
-    new Date(a.event_time || 0) - new Date(b.event_time || 0));
+    new Date(b.event_time || 0) - new Date(a.event_time || 0));
 
   const eventsHtml = ordered.map(r => {
     const t   = r.event_time ? new Date(r.event_time) : null;
@@ -3677,7 +3655,7 @@ function printCaseLookup() {
       <div class="cnp-section-label">AI Summary</div>
       <div class="cnp-summary">${esc(sum)}</div>
     ` : ''}
-    <div class="cnp-section-label">Communication Timeline (${ordered.length} events, oldest first)</div>
+    <div class="cnp-section-label">Communication Timeline (${ordered.length} events, newest first)</div>
     ${eventsHtml}
     <div class="cnp-footer">
       Spectrum Killian Dental Lab Alliance · Printed ${new Date().toLocaleString()}
@@ -4789,13 +4767,13 @@ const TOUR_STEPS = [
   { title: "Drafts you approve", body: "Case Review and Case Entry use this form instead of a Case Note. The system drafts, you approve.",
     selector: '#panel-submit', placement: 'top' },
 
-  { title: "Click Case Lookup", body: "Open the next tab.",
-    selector: '#tabs-outreach .tab[data-tab="lookup"]', placement: 'bottom', requireClick: true },
-  { title: "Useful for RCCA", body: "Type a case number to see every communication on it in order. Outbound, inbound, and internal notes together.",
-    selector: '#panel-lookup', placement: 'top' },
+  { title: "Useful for RCCA", body: "Case Lookup is now its own mode — open it any time from the app switcher (top-left); every role can. Type a case number to see every communication on it in order. Outbound, inbound, and internal notes together.",
+    selector: '#panel-lookup', placement: 'top',
+    beforeShow: () => switchMode('lookup') },
 
   { title: "Click Audit", body: "Open the last Outreach tab.",
-    selector: '#tabs-outreach .tab[data-tab="audit"]', placement: 'bottom', requireClick: true },
+    selector: '#tabs-outreach .tab[data-tab="audit"]', placement: 'bottom', requireClick: true,
+    beforeShow: () => switchMode('outreach') },
   { title: "Spot patterns", body: "Approved counts unique doctor approvals across the email flow, ABS, and Case Coordination (overlap counted once). Edited/Rejected are coordinator review actions — high edit rate means the template needs work. Auto-canceled is a separate column: drafts the system retired because the case is no longer active in ABS (not approvals, not rejections).",
     selector: '#panel-audit', placement: 'top' },
 

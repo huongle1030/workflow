@@ -3297,13 +3297,13 @@
     <span class="chevron">▼</span>
     <div class="app-switcher" onclick="event.stopPropagation()">
       <div class="header">Spectrum Killian Apps</div>
-      <div class="app-item" data-mode="outreach" onclick="switchMode('outreach'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark"></div>
+      <div class="app-item" data-mode="lookup" onclick="switchMode('lookup'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark cc"></div>
         <div class="app-info">
-          <span class="name">Design Approvals</span>
-          <span class="desc">Coordinator inbox · doctor outreach automation</span>
+          <span class="name">Case Lookup</span>
+          <span class="desc">Every communication on a case, in order</span>
         </div>
-        <span id="check-outreach" class="check">✓</span>
+        <span id="check-lookup" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="cc" onclick="switchMode('cc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
@@ -3344,6 +3344,14 @@
           <span class="desc">Design checklist, QC, outsourcing, ZIP export</span>
         </div>
         <span id="check-design" class="check" style="display:none;">✓</span>
+      </div>
+      <div class="app-item" data-mode="outreach" onclick="switchMode('outreach'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <div class="app-mark"></div>
+        <div class="app-info">
+          <span class="name">Design Approvals</span>
+          <span class="desc">Coordinator inbox · doctor outreach automation</span>
+        </div>
+        <span id="check-outreach" class="check">✓</span>
       </div>
       <div class="app-item" data-mode="qc" onclick="switchMode('qc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <div class="app-mark cc"></div>
@@ -3412,7 +3420,6 @@
   <div class="tab" data-tab="submit">Submit Request</div>
   <div class="tab tab-parent active" data-group="pending">Pending <span class="badge" id="badge-pending">–</span></div>
   <div class="tab tab-parent" data-group="actions">Actions <span class="badge" id="badge-actions">–</span></div>
-  <div class="tab" data-tab="lookup">Case Lookup</div>
   <div class="tab" data-tab="audit">Audit</div>
   <div class="tab" data-tab="editlog">Edit Log <span class="badge" id="badge-editlog">–</span></div>
   <div class="tab" data-tab="feedback">Feedback</div>
@@ -3462,52 +3469,13 @@
 </div>
 
 <div class="panel" id="panel-outbound">
-  <h2>Scan Submission <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  scan-submission acks awaiting your review</span></h2>
-  <div class="outbound-toolbar">
-    <div class="toolbar-left">
-      <label class="toolbar-label">Sort by</label>
-      <select id="outbound-sort" onchange="setOutboundSort(this.value)">
-        <option value="oldest">Oldest first</option>
-        <option value="newest">Newest first</option>
-        <option value="revenue_desc" selected>Highest revenue</option>
-        <option value="revenue_asc">Lowest revenue</option>
-        <option value="due_soonest">Due date: soonest</option>
-        <option value="due_latest">Most overdue</option>
-      </select>
-      <label class="toolbar-label" style="margin-left: 18px;">Strategic partner</label>
-      <div class="custom-dd" id="outbound-partner-dd">
-        <button type="button" class="custom-dd-btn" onclick="togglePartnerDd(event)" aria-haspopup="listbox">
-          <span class="custom-dd-label" id="outbound-partner-label">All partners</span>
-          <span class="chip-count" id="outbound-partner-count">–</span>
-        </button>
-        <div class="custom-dd-menu" id="outbound-partner-menu" role="listbox"></div>
-      </div>
-      <label class="toolbar-label" style="margin-left: 18px;">Filter</label>
-      <div class="custom-dd" id="outbound-filter-dd">
-        <button type="button" class="custom-dd-btn" onclick="toggleFilterDd(event)" aria-haspopup="listbox">
-          <span class="custom-dd-label" id="outbound-filter-label">All drafts</span>
-          <span class="chip-count" id="outbound-filter-count">–</span>
-        </button>
-        <div class="custom-dd-menu" id="outbound-filter-menu" role="listbox"></div>
-      </div>
-    </div>
-    <div class="toolbar-right">
-      <label class="toolbar-label">Type</label>
-      <div class="custom-dd" id="outbound-reason-dd">
-        <button type="button" class="custom-dd-btn" onclick="toggleReasonDd(event)" aria-haspopup="listbox">
-          <span class="custom-dd-label" id="outbound-reason-label">All types</span>
-          <span class="chip-count" id="outbound-reason-count">–</span>
-        </button>
-        <div class="custom-dd-menu" id="outbound-reason-menu" role="listbox"></div>
-      </div>
-      <div class="outbound-count" id="outbound-count"></div>
-    </div>
-  </div>
+  <h2>Scan Submission</h2>
+  <div class="outbound-count" id="outbound-count"></div>
   <div id="list-outbound"><div class="loading">Loading…</div></div>
 </div>
 
 <div class="panel hidden" id="panel-approval">
-  <h2>Pending Outbound <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  doctor design-approval cases — awaiting their approval</span></h2>
+  <h2>Pending Outbound</h2>
   <div class="outbound-count" id="approval-count"></div>
   <div id="list-approval"><div class="loading">Loading…</div></div>
 </div>
@@ -3519,7 +3487,7 @@
 </div>
 
 <div class="panel hidden" id="panel-inbound">
-  <h2>Pending Classification <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  doctor responses awaiting confirmation</span></h2>
+  <h2>Pending Classification</h2>
   <div class="inbound-toolbar">
     <div class="filter-chips">
       <label class="toolbar-label">Status</label>
