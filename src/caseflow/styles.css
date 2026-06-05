@@ -30,6 +30,9 @@
   color: var(--color-text-primary);
 }
 .cf-root *, .cf-root *::before, .cf-root *::after { box-sizing: border-box; }
+/* Form controls don't inherit font-family by default — force Montserrat on every
+   button/input/select/textarea so all CaseFlow tabs & controls match the brand. */
+.cf-root button, .cf-root input, .cf-root textarea, .cf-root select { font-family: var(--font-sans); }
 
 /* buttons */
 .cf-root .btn { display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);font-size:13px;color:var(--color-text-primary);cursor:pointer;transition:background .12s;font-family:var(--font-sans) }

@@ -3,6 +3,8 @@
    mode matches Case Coordination / Design Approvals. */
 
 .qc-root { font-family: 'Montserrat', sans-serif; color: var(--charcoal); }
+/* Form controls don't inherit font-family — keep all QC buttons/inputs on Montserrat. */
+.qc-root button, .qc-root input, .qc-root textarea, .qc-root select { font-family: inherit; }
 
 /* Segmented sub-tab toggle (QC Reject / Internal Remake) */
 .qc-header { margin-bottom: 18px; }

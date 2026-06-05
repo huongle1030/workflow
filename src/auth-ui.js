@@ -31,8 +31,8 @@ function authCard(innerHtml) {
     <div class="auth-card">
       <div class="auth-logo"></div>
       <div class="auth-brand">
-        <div class="auth-brand-name">SKDLA</div>
-        <div class="auth-brand-sub">Design Approvals</div>
+        <div class="auth-brand-name">ClearPath<span class="auth-brand-os">OS</span></div>
+        <div class="auth-brand-sub">Lab Management System</div>
       </div>
       ${innerHtml}
     </div>

@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Design Approvals · Coordinator Inbox</title>
+<title>ClearPath OS · Design Approvals</title>
+<link rel="icon" type="image/png" href="/logos/clearpath-black.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Lora:wght@400;500;700&display=swap" rel="stylesheet">
@@ -30,14 +31,24 @@
     --red-soft: #F8E3DC;
     --yellow: #B07D10;
     --yellow-soft: #FBF3DC;
-    --charcoal: #1F2937;
-    --slate: #6B7785;
-    --slate-light: #DDE2E8;
+    --charcoal: #0e2433;      /* → ClearPath primary text */
+    --slate: #41566a;         /* → ClearPath secondary text */
+    --slate-light: #dde6ee;   /* → ClearPath line */
     --silver: #B0B7C3;        /* Solutions Silver */
     --silver-tint: #EEF0F4;   /* Solutions Silver light tint */
     --blue-tint: #E9F5FD;     /* Dental/Alliance Blue light tint */
     --white: #FFFFFF;
-    --bg: #F4F7FA;
+    /* ---- ClearPath OS — light UI tokens (DESIGN-SYSTEM.md §3) ---- */
+    --bg: #ffffff;            /* app background (all-white per preference) */
+    --panel: #ffffff;        /* panel / card   */
+    --panel2: #f4f8fb;       /* inset surfaces */
+    --panel3: #e9eff5;       /* hover surfaces */
+    --line: #dde6ee;         /* border         */
+    --line2: #c6d4e0;        /* strong border  */
+    --text: #0e2433;         /* primary text   */
+    --text2: #41566a;        /* secondary text */
+    --text3: #7e8ea0;        /* muted text     */
+    --accent: #1882C7;       /* interactive (Killian Blue) */
     --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --font-serif: 'Lora', Georgia, 'Times New Roman', serif;
   }
@@ -54,137 +65,250 @@
   .preview, .prefs-banner .text, .preview-subject + *,
   .email-body-editor { font-family: var(--font-serif); }
   a { color: var(--blue); }
+  /* Form controls don't inherit font-family by default — force every button,
+     input, select, and textarea onto the brand font (Montserrat). */
+  button, input, select, textarea, optgroup { font-family: inherit; }
 
   /* App bar */
+  /* ===== ClearPath OS standard header (HEADER-SPEC.md) — light ===== */
   .appbar {
-    background: linear-gradient(180deg, var(--navy) 0%, var(--navy-mid) 100%);
-    color: var(--white);
-    padding: 14px 28px;
+    background: var(--panel);
+    color: var(--text);
+    padding: 10px 18px;
     display: flex; justify-content: space-between; align-items: center;
-    gap: 16px; flex-wrap: wrap;
-    border-bottom: 1px solid rgba(74, 190, 238, 0.15);
-    box-shadow: 0 2px 12px rgba(5, 32, 48, 0.08);
+    gap: 14px; flex-wrap: nowrap;
+    height: 96px;
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 1px 0 var(--line);
   }
+  /* LEFT — ClearPath lockup + FIXED module title ("Workflow Module") */
   .brand {
-    display: flex; align-items: center; gap: 14px;
-    cursor: pointer; padding: 4px 8px; border-radius: 4px;
+    display: flex; align-items: flex-end; gap: 14px;
+    padding: 4px 8px; border-radius: 10px;
     position: relative;
-    transition: background 0.15s;
   }
-  .brand:hover { background: rgba(255,255,255,0.06); }
-  .brand .chevron {
-    color: rgba(255,255,255,0.5); font-size: 10px;
-    margin-left: 4px; transition: transform 0.15s;
+  /* "OPERATING SYSTEM" eyebrow tucked under the ClearPath wordmark */
+  .cp-os {
+    position: absolute; top: 100%; left: 8px; margin-top: 1px; margin-left: 43px;
+    font-size: 8px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--gold); white-space: nowrap; pointer-events: none;
   }
-  .brand.open .chevron { transform: rotate(180deg); color: var(--blue-soft); }
+  .cp-divider {
+    align-self: flex-end; width: 1px; height: 30px; margin-bottom: 5px;
+    background: var(--line2);
+  }
+  /* Spectrum Killian endorsement — fixed, far right */
+  .cp-sk { height: 76px; width: auto; display: block; flex: 0 0 auto; cursor: pointer; transition: opacity .15s; }
+  .cp-sk:hover { opacity: 0.85; }
+
+  /* ===== Sub-header bar — module switcher + actions + status ===== */
+  .subbar {
+    position: relative; z-index: 95;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    padding: 8px 28px;
+    box-shadow: 0 1px 0 var(--line);
+  }
+  .subbar-left {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .subbar-right {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    margin-left: auto;
+  }
+  /* Send-gate badge — pinned bottom-right of the viewport on every page */
+  .gate-badge {
+    position: fixed; right: 16px; bottom: 14px; z-index: 300;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line);
+    box-shadow: 0 6px 20px -8px rgba(5,32,48,0.35);
+    color: var(--text2); font-size: 11.5px; font-weight: 600;
+    pointer-events: none; user-select: none;
+  }
+  .gate-badge .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--gold);
+    box-shadow: 0 0 0 3px rgba(179,163,105,0.18);
+  }
+  /* Module / mode dropdown trigger (lives in the subbar) */
+  .mode-switch {
+    position: relative;
+    display: inline-flex; align-items: center; gap: 9px;
+    cursor: pointer; user-select: none;
+    background: var(--panel); border: 1px solid var(--line2);
+    border-radius: 9px; padding: 7px 12px;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  .mode-switch:hover { border-color: var(--gold); box-shadow: 0 2px 10px -4px rgba(179,163,105,0.6); }
+  .mode-switch.open { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(179,163,105,0.18); }
+  .mode-switch:hover .ms-current,
+  .mode-switch.open .ms-current { color: var(--gold); }
+  .mode-switch .ms-eyebrow {
+    font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--text3);
+  }
+  .mode-switch .ms-current {
+    font-size: 14px; font-weight: 700; letter-spacing: -.2px; color: var(--text);
+    transition: color .15s;
+  }
+  .mode-switch .chevron {
+    color: var(--gold); font-size: 9px; margin-left: 1px;
+    transition: transform .15s, color .15s;
+  }
+  .mode-switch.open .chevron { transform: rotate(180deg); color: var(--gold); }
 
   .app-switcher {
     position: absolute;
-    top: 100%; left: 0; margin-top: 6px;
+    top: 100%; left: 0; margin-top: 8px;
     background: var(--white);
-    border: 1px solid var(--slate-light);
-    border-radius: 6px;
-    min-width: 280px;
-    box-shadow: 0 10px 32px rgba(0,0,0,0.25);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    min-width: 230px; max-width: 92vw;
+    box-shadow: 0 18px 44px -12px rgba(5,32,48,0.35);
     z-index: 200;
     display: none;
-    overflow: hidden;
+    /* vertical list — one mode per row */
+    flex-direction: column;
+    gap: 1px; padding: 7px;
   }
-  .brand.open .app-switcher { display: block; }
+  .mode-switch.open .app-switcher { display: flex; }
   .app-switcher .app-item {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 16px;
-    color: var(--charcoal);
-    text-decoration: none;
-    border-bottom: 1px solid var(--slate-light);
-    cursor: pointer;
+    display: flex; align-items: center; justify-content: flex-start; gap: 7px;
+    padding: 9px 13px; border-radius: 8px;
+    color: var(--text); cursor: pointer; white-space: nowrap;
+    transition: background .14s, color .14s;
   }
-  .app-switcher .app-item:last-child { border-bottom: none; }
-  .app-switcher .app-item:hover { background: var(--pale); }
-  .app-switcher .app-mark {
-    width: 33px; height: 33px;
-    background: url('/skdla_logo.png') no-repeat center / contain;
-    flex-shrink: 0;
-  }
-  .app-switcher .app-mark::after { display: none; }
-  .app-switcher .app-mark.cc {
-    background: url('/skdla_logo.png') no-repeat center / contain;
-  }
-  .app-switcher .app-info {
-    flex: 1; display: flex; flex-direction: column; gap: 1px;
-  }
-  .app-switcher .app-info .name {
-    font-size: 13px; font-weight: 800;
-    color: var(--navy); letter-spacing: 0.5px;
-  }
-  .app-switcher .app-info .desc {
-    font-size: 11px; color: var(--slate);
+  .app-switcher .app-item:hover { background: var(--gold-tint); color: var(--gold); }
+  .app-switcher .app-item .name {
+    font-size: 14px; font-weight: 500; letter-spacing: 0;
   }
   .app-switcher .check {
-    color: var(--green); font-size: 16px; font-weight: 800;
+    color: var(--green); font-size: 13px; font-weight: 700;
   }
-  .app-switcher .external {
-    color: var(--slate); font-size: 12px;
+  /* ===================================================================
+     Landing / Home — ClearPath OS launchpad (futuristic, light theme).
+     One glowing card per mode the signed-in role may open.
+     =================================================================== */
+  #panel-landing {
+    position: relative;
+    /* pull out to the panel padding edges for a full-bleed hero surface */
+    margin: -4px -28px -28px; padding: 40px 40px 56px;
+    overflow: hidden;
+    background:
+      radial-gradient(1100px 460px at 12% -8%, rgba(74,190,238,0.20), transparent 60%),
+      radial-gradient(900px 520px at 100% 0%, rgba(24,130,199,0.12), transparent 55%),
+      linear-gradient(180deg, #f5fafe 0%, var(--bg) 60%);
   }
-  .app-switcher .header {
-    background: var(--navy); color: rgba(255,255,255,0.7);
-    padding: 8px 16px;
-    font-size: 10px; font-weight: 800;
-    letter-spacing: 1.5px; text-transform: uppercase;
+  .landing-head { position: relative; z-index: 1; max-width: 760px; }
+  .landing-eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 14px;
+    padding: 5px 11px; border-radius: 999px;
+    background: rgba(24,130,199,0.08); border: 1px solid rgba(24,130,199,0.22);
   }
-  /* ---- Landing page (boot home; one card per mode the role can open) ---- */
-  .landing-head { margin-bottom: 6px; }
+  .landing-eyebrow .pulse {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--blue-soft);
+    box-shadow: 0 0 0 0 rgba(74,190,238,0.7); animation: cpPulse 2.2s infinite;
+  }
+  @keyframes cpPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(74,190,238,0.55); }
+    70%  { box-shadow: 0 0 0 8px rgba(74,190,238,0); }
+    100% { box-shadow: 0 0 0 0 rgba(74,190,238,0); }
+  }
   .landing-head h2 {
-    font-family: var(--font-serif); font-size: 26px; font-weight: 600;
-    color: var(--navy); margin-bottom: 4px;
+    font-family: var(--font-sans); font-weight: 800; font-size: 34px; line-height: 1.08;
+    letter-spacing: -.6px; color: var(--text); margin-bottom: 8px;
   }
-  .landing-head .sub { color: var(--slate); font-size: 14px; }
+  .landing-head h2 .acc {
+    background: linear-gradient(92deg, var(--blue) 0%, var(--blue-soft) 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .landing-head .sub { font-family: var(--font-serif); color: var(--text2); font-size: 15px; }
   .landing-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 16px; margin-top: 22px;
+    position: relative; z-index: 1;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 18px; margin-top: 30px;
   }
   .landing-card {
-    display: flex; align-items: flex-start; gap: 14px;
-    background: var(--white); border: 1px solid var(--slate-light);
-    border-radius: 12px; padding: 18px 18px;
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; gap: 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.82));
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: 16px;
+    padding: 20px 20px 20px 22px;
     cursor: pointer; text-align: left;
-    transition: border-color .15s, box-shadow .15s, transform .1s;
+    box-shadow: 0 1px 2px rgba(5,32,48,0.04);
+    transition: border-color .18s, box-shadow .22s, transform .14s, background .18s;
+  }
+  /* left accent bar (Killian) + the futuristic corner glow */
+  .landing-card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: linear-gradient(180deg, var(--blue-soft), var(--blue));
+    opacity: .8; transition: width .18s, opacity .18s;
+  }
+  .landing-card::after {
+    content: ""; position: absolute; right: -40px; top: -40px;
+    width: 130px; height: 130px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(74,190,238,0.22), transparent 70%);
+    opacity: 0; transition: opacity .22s;
   }
   .landing-card:hover {
-    border-color: var(--blue-soft);
-    box-shadow: 0 6px 20px rgba(8,32,48,0.10);
-    transform: translateY(-2px);
+    border-color: rgba(24,130,199,0.55);
+    box-shadow: 0 18px 40px -18px rgba(24,130,199,0.45), 0 2px 8px rgba(5,32,48,0.06);
+    transform: translateY(-3px);
   }
+  .landing-card:hover::before { width: 5px; opacity: 1; }
+  .landing-card:hover::after { opacity: 1; }
   .landing-card .lc-mark {
-    flex: 0 0 auto; width: 42px; height: 42px; border-radius: 10px;
+    position: relative; flex: 0 0 auto; width: 48px; height: 48px; border-radius: 13px;
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-serif); font-weight: 700; font-size: 19px;
-    color: var(--white); background: var(--blue);
+    font-family: var(--font-sans); font-weight: 800; font-size: 20px;
+    color: var(--white);
+    background: linear-gradient(150deg, var(--blue) 0%, var(--navy) 100%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), 0 6px 16px -6px rgba(24,130,199,0.6);
   }
-  .landing-card .lc-mark.gold { background: var(--gold); }
+  .landing-card .lc-mark.gold {
+    background: linear-gradient(150deg, var(--gold-light) 0%, var(--gold) 100%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22), 0 6px 16px -6px rgba(179,163,105,0.6);
+  }
+  .landing-card .lc-info { flex: 1 1 auto; min-width: 0; }
+  .landing-card .lc-kicker {
+    display: block; font-size: 9px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--text3); margin-bottom: 3px;
+  }
   .landing-card .lc-info .name {
-    display: block; font-weight: 700; font-size: 15px; color: var(--navy);
-    margin-bottom: 3px;
+    display: block; font-weight: 700; font-size: 16px; color: var(--text);
+    margin-bottom: 3px; letter-spacing: -.2px;
   }
-  .landing-card .lc-info .desc { color: var(--slate); font-size: 12.5px; line-height: 1.45; }
-  .landing-empty { color: var(--slate); font-size: 14px; margin-top: 24px; }
+  .landing-card .lc-info .desc { color: var(--text2); font-size: 12.5px; line-height: 1.45; }
+  .landing-card .lc-go {
+    flex: 0 0 auto; color: var(--text3); font-size: 18px; font-weight: 700;
+    transform: translateX(-4px); opacity: 0; transition: transform .18s, opacity .18s, color .18s;
+  }
+  .landing-card:hover .lc-go { transform: translateX(0); opacity: 1; color: var(--accent); }
+  .landing-empty { position: relative; z-index: 1; color: var(--text2); font-size: 14px; margin-top: 24px; }
+  /* ClearPath wordmark — 34px tall per HEADER-SPEC, bottom-aligned in the lockup */
   .mark {
-    width: 48px; height: 48px;
-    background: url('/skdla_logo.png') no-repeat center / contain;
+    width: 174px; height: 34px; align-self: flex-end; flex: 0 0 auto;
+    background: url('/logos/clearpath-black.png') no-repeat left center / contain;
+    cursor: pointer; transition: opacity .15s;
   }
+  .mark:hover { opacity: 0.75; }
   .mark::after { display: none; }
+  /* Module title — 21px/800, baseline-aligned to the ClearPath wordmark */
+  .brand-text { display: flex; flex-direction: column; align-self: flex-end; }
   .brand-text .name {
-    font-weight: 700; font-size: 15px; letter-spacing: 2.5px;
-    text-transform: uppercase; display: block;
+    font-weight: 800; font-size: 21px; line-height: 1; letter-spacing: -.3px;
+    text-transform: none; display: block; color: var(--text);
+    position: relative; bottom: 4px;
     font-family: 'Montserrat', sans-serif;
   }
-  .brand-text .sub {
-    color: var(--blue-soft); font-size: 10px;
-    letter-spacing: 2.5px; text-transform: uppercase;
-    font-weight: 500;
-    margin-top: 2px;
-  }
-  .appbar-right { display: flex; align-items: center; gap: 14px; font-size: 12px; }
+  .brand-text .sub { display: none; }   /* kit lockup has no sub-caption */
+  /* MIDDLE slot — designer free area (nav/actions/status), grows to fill */
+  .appbar-right { display: flex; align-items: center; gap: 14px; font-size: 12px; flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
   .pill-gold {
     background: var(--gold); color: white;
     padding: 5px 14px; border-radius: 16px;
@@ -192,8 +316,8 @@
     letter-spacing: 2px; text-transform: uppercase;
     font-family: 'Montserrat', sans-serif;
   }
-  .updated { color: rgba(255,255,255,.7); display: flex; align-items: center; gap: 7px; }
-  .updated .dot { width: 8px; height: 8px; border-radius: 50%; background: #A5DDB6; }
+  .updated { color: var(--text3); display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 500; }
+  .updated .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
   .updated .dot.err { background: var(--red); }
 
   /* Settings gear menu (replaces inline Diag + Config buttons) */
@@ -231,10 +355,10 @@
     text-decoration: none;
     border-bottom: 1px solid var(--slate-light);
     cursor: pointer;
-    transition: background 0.12s;
+    transition: background 0.12s, color 0.12s;
   }
   .settings-item:last-child { border-bottom: none; }
-  .settings-item:hover { background: var(--pale); }
+  .settings-item:hover { background: var(--pale); color: var(--accent); }
   .settings-icon {
     font-size: 18px;
     width: 24px; text-align: center;
@@ -278,7 +402,7 @@
     width: 1px;
     background: var(--slate-light);
   }
-  .tab:hover:not(.active) { color: var(--navy); background: var(--bg); }
+  .tab:hover:not(.active) { color: var(--accent); background: var(--bg); }
   .tab .badge {
     position: absolute;
     top: 8px; right: 8px;
@@ -803,7 +927,7 @@
 
   /* Page title block */
   .cc-page-title {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: var(--font-sans);
     font-size: 28px; font-weight: 800; color: var(--navy);
     letter-spacing: -0.5px; margin-bottom: 4px;
   }
@@ -881,7 +1005,7 @@
     cursor: pointer; color: var(--slate);
     transition: background .12s, color .12s;
   }
-  .cc-pill:hover { color: var(--charcoal); }
+  .cc-pill:hover:not(.cc-pill-active):not(.active) { color: var(--accent); }
   .cc-pill-active, .cc-pill.active {
     background: var(--blue); color: white;
   }
@@ -930,6 +1054,32 @@
   .cc-status-cell .case-row .meta {
     font-size: 11px; color: var(--slate); margin-top: 2px;
   }
+  /* Clickable "+N more" — opens the stage modal */
+  .cc-more-link {
+    margin-top: 6px; font-size: 11px; font-weight: 700; color: var(--accent);
+    cursor: pointer; display: inline-block; padding: 2px 0;
+    border-bottom: 1px dashed transparent; transition: border-color .15s, opacity .15s;
+  }
+  .cc-more-link:hover { border-bottom-color: var(--accent); }
+  /* Stage modal — all cases of a status in tile format */
+  .cc-stage-modal-pill {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 26px; height: 22px; padding: 0 8px; margin-left: 8px;
+    border-radius: 999px; background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 800; vertical-align: middle;
+  }
+  .cc-stage-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+  }
+  .cc-stage-grid .case-row {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--blue);
+    border-radius: 10px; padding: 12px 14px; margin: 0; font-size: 13px;
+  }
+  .cc-stage-grid .case-row .cnum { font-family: Consolas, monospace; font-weight: 800; color: var(--navy); }
+  .cc-stage-grid .case-row .pname { color: var(--slate); }
+  .cc-stage-grid .case-row .meta { font-size: 11px; color: var(--slate); margin-top: 4px; }
 
   /* Stage-specific palettes */
   .cc-status-cell.cc-stage-design-changes { background: #F8E3DC; border-color: #F0C7B9; }
@@ -1047,6 +1197,50 @@
   }
   .cc-del:hover { background: var(--red-soft); color: var(--red); }
 
+  /* ---- Coordinator roster cards (name + sign-in role) ---- */
+  .cc-coord-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .cc-coord-card {
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; gap: 14px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px 16px 16px 18px;
+    box-shadow: 0 1px 2px rgba(5,32,48,0.04);
+    transition: border-color .18s, box-shadow .22s, transform .14s;
+  }
+  .cc-coord-card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: linear-gradient(180deg, var(--blue-soft), var(--blue)); opacity: .8;
+  }
+  .cc-coord-card:hover {
+    border-color: rgba(24,130,199,0.5);
+    box-shadow: 0 14px 32px -16px rgba(24,130,199,0.45);
+    transform: translateY(-2px);
+  }
+  .cc-coord-card .ccc-mark {
+    flex: 0 0 auto; width: 44px; height: 44px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 18px; color: var(--white);
+    background: linear-gradient(150deg, var(--blue) 0%, var(--navy) 100%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), 0 6px 16px -6px rgba(24,130,199,0.6);
+  }
+  .cc-coord-card .ccc-info { flex: 1 1 auto; min-width: 0; }
+  .cc-coord-card .ccc-name {
+    display: block; font-weight: 700; font-size: 15px; color: var(--text);
+    letter-spacing: -.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cc-coord-card .ccc-role { display: block; font-size: 12.5px; color: var(--accent); font-weight: 600; margin-top: 2px; }
+  .cc-coord-card .ccc-role.none { color: var(--text3); font-weight: 500; font-style: italic; }
+  .cc-coord-card .ccc-del {
+    flex: 0 0 auto; align-self: flex-start;
+    background: transparent; border: none; cursor: pointer;
+    color: var(--text3); padding: 2px 6px; border-radius: 6px;
+    font-size: 11.5px; font-weight: 700;
+  }
+  .cc-coord-card .ccc-del:hover { background: var(--red-soft); color: var(--red); }
+
   /* ============================================================
      Case card rows (used by Case Tracker + New Log live tracker)
      ============================================================ */
@@ -1116,7 +1310,7 @@
     padding: 8px 18px; border-radius: 7px;
     font-size: 13px; font-weight: 700; color: var(--slate);
   }
-  .cc-subtab:hover { color: var(--charcoal); }
+  .cc-subtab:hover:not(.active) { color: var(--accent); }
   .cc-subtab.active { background: var(--white); color: var(--navy);
     box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 
@@ -2293,10 +2487,10 @@
   }
   .appbar {
     position: sticky; top: 0; z-index: 100;
-    padding: 14px 28px;
+    padding: 10px 28px;
   }
   .tabs {
-    position: sticky; top: 60px; z-index: 90;
+    position: sticky; top: 96px; z-index: 90;
     padding: 0;
   }
   /* Stats and panels flow naturally so they scroll with the page */
@@ -2943,21 +3137,22 @@
      status sits lower (at the bottom of the appbar in muted gray). */
   .appbar {
     align-items: center;
-    /* Equal top/bottom padding so .brand and .appbar-actions sit truly
-       vertical-centered with the bar. The absolutely-positioned status
-       row tucks into the bottom padding without shifting the centerline. */
-    padding-top: 13px;
-    padding-bottom: 13px;
+    /* Fixed 96px ClearPath header — 10px top/bottom keeps the 76px SK logo
+       centered without growing the bar past 96px (border-box). */
+    padding-top: 10px;
+    padding-bottom: 10px;
     position: relative;
   }
   /* Tabs strip scrolls with the page (both Design Approvals and
      Case Coordination tabs use the .tabs class) */
   .tabs { position: static; top: auto; }
   .appbar-right {
+    position: relative;        /* anchor the absolute status row to the slot */
     display: flex;
     align-items: center;       /* vertically center the action row */
     justify-content: flex-end;
     gap: 0;
+    padding-bottom: 14px;      /* room for the status row tucked at the bottom */
   }
   .appbar-actions {
     display: flex; align-items: center;
@@ -2968,20 +3163,20 @@
     background: transparent;
     border: none;
     padding: 4px 2px;
-    color: var(--white);
+    color: var(--text2);
     font-family: inherit;
-    font-size: 15px;
-    font-weight: 500;
+    font-size: 13.5px;
+    font-weight: 600;
     letter-spacing: 0.2px;
     cursor: pointer;
     transition: color 0.15s, opacity 0.15s;
     line-height: 1.2;
     white-space: nowrap;
   }
-  .appbar-link:hover { color: var(--blue-soft); }
-  .appbar-link:focus { outline: none; color: var(--blue-soft); }
+  .appbar-link:hover { color: var(--gold); }
+  .appbar-link:focus { outline: none; color: var(--gold); }
   .appbar-sep {
-    color: rgba(255,255,255,0.3);
+    color: var(--line2);
     font-size: 14px;
     user-select: none;
   }
@@ -2993,22 +3188,23 @@
 
   /* Lower status row — pinned to the bottom of the appbar */
   .appbar-status {
-    position: absolute;
-    right: 28px; bottom: 6px;
+    position: static;
     display: flex; align-items: center; gap: 8px;
-    color: rgba(255,255,255,0.5);
+    color: var(--text3);
     font-size: 11.5px;
-    font-weight: 400;
+    font-weight: 500;
+    padding-left: 16px; margin-left: 2px;
+    border-left: 1px solid var(--line2);
   }
   .appbar-status-gate {
-    color: rgba(255,255,255,0.5);
-    font-weight: 400;
+    color: var(--text3);
+    font-weight: 500;
     background: transparent !important;
     border: none !important;
     padding: 0 !important;
   }
-  .appbar-status-sep { color: rgba(255,255,255,0.3); }
-  .appbar-status .updated { color: rgba(255,255,255,0.5); }
+  .appbar-status-sep { color: var(--line2); }
+  .appbar-status .updated { color: var(--text3); }
 
   /* --- Action buttons inside item cards (Approve, Edit, Auto Resummarize,
      View in Exocad, Reject, etc.) — pill style with colored border --- */
@@ -3324,90 +3520,57 @@
 <body>
 
 <div class="appbar">
-  <div class="brand" id="brand-switcher" onclick="toggleAppSwitcher(event)">
-    <div class="mark"></div>
+  <div class="brand">
+    <div class="mark" onclick="switchMode('landing')" role="button" tabindex="0" title="Go to Home"></div>
+    <span class="cp-os">Operating System</span>
+    <span class="cp-divider"></span>
     <div class="brand-text">
-      <span class="name">Design Approvals</span>
-      <span class="sub">Spectrum Killian · Coordinator Inbox</span>
+      <span class="name">Workflow Module</span>
+      <span class="sub">Spectrum Killian</span>
     </div>
+  </div>
+  <img class="cp-sk" src="/logos/spectrum-killian-stacked-color.png" alt="Spectrum Killian" onclick="switchMode('landing')" role="button" tabindex="0" title="Go to Home" />
+</div>
+
+<!-- Sub-header: module/mode switcher + updated time · actions -->
+<div class="subbar">
+  <div class="subbar-left">
+  <div class="mode-switch" id="brand-switcher" onclick="toggleAppSwitcher(event)" title="Switch tab">
+    <span class="ms-current" id="mode-current">Home</span>
     <span class="chevron">▼</span>
     <div class="app-switcher" onclick="event.stopPropagation()">
-      <div class="header">Spectrum Killian Apps</div>
       <div class="app-item" data-mode="landing" onclick="switchMode('landing'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Home</span>
-          <span class="desc">All the apps your role can open</span>
-        </div>
-        <span id="check-landing" class="check" style="display:none;">✓</span>
+        <span class="name">Home</span><span id="check-landing" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="lookup" onclick="switchMode('lookup'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Case Lookup</span>
-          <span class="desc">Every communication on a case, in order</span>
-        </div>
-        <span id="check-lookup" class="check" style="display:none;">✓</span>
+        <span class="name">Case Lookup</span><span id="check-lookup" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="cc" onclick="switchMode('cc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Case Coordination</span>
-          <span class="desc">Case workflow board ·stage tracking, logs, coordinators</span>
-        </div>
-        <span id="check-cc" class="check" style="display:none;">✓</span>
+        <span class="name">Case Coordination</span><span id="check-cc" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="dataentry" onclick="switchMode('dataentry'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Data Entry</span>
-          <span class="desc">Enter case information + AOX checklist, route to review</span>
-        </div>
-        <span id="check-dataentry" class="check" style="display:none;">✓</span>
+        <span class="name">Data Entry</span><span id="check-dataentry" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="casereview" onclick="switchMode('casereview'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Case Review</span>
-          <span class="desc">AOX review checklist + route to design or scanning</span>
-        </div>
-        <span id="check-casereview" class="check" style="display:none;">✓</span>
+        <span class="name">Case Review</span><span id="check-casereview" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="scanning" onclick="switchMode('scanning'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Scanning</span>
-          <span class="desc">Upload scan files, pass to the design team</span>
-        </div>
-        <span id="check-scanning" class="check" style="display:none;">✓</span>
+        <span class="name">Scanning</span><span id="check-scanning" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="design" onclick="switchMode('design'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Design Team</span>
-          <span class="desc">Design checklist, QC, outsourcing, ZIP export</span>
-        </div>
-        <span id="check-design" class="check" style="display:none;">✓</span>
+        <span class="name">Design Team</span><span id="check-design" class="check" style="display:none;">✓</span>
       </div>
       <div class="app-item" data-mode="outreach" onclick="switchMode('outreach'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark"></div>
-        <div class="app-info">
-          <span class="name">Design Approvals</span>
-          <span class="desc">Coordinator inbox · doctor outreach automation</span>
-        </div>
-        <span id="check-outreach" class="check">✓</span>
+        <span class="name">Design Approvals</span><span id="check-outreach" class="check">✓</span>
       </div>
       <div class="app-item" data-mode="qc" onclick="switchMode('qc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
-        <div class="app-mark cc"></div>
-        <div class="app-info">
-          <span class="name">Quality Control</span>
-          <span class="desc">Log QC rejects & internal remakes</span>
-        </div>
-        <span id="check-qc" class="check" style="display:none;">✓</span>
+        <span class="name">Quality Control</span><span id="check-qc" class="check" style="display:none;">✓</span>
       </div>
     </div>
   </div>
-  <div class="appbar-right">
+  <span class="updated" id="updated-status"><span class="dot" id="status-dot"></span><span id="lastUpdated">Loading…</span></span>
+  </div>
+  <div class="subbar-right">
     <div class="appbar-actions">
       <button type="button" class="appbar-link hidden" id="approvals-btn" onclick="openApprovals()">Approvals<span class="appr-count" id="approvals-count" style="display:none;"></span></button>
       <span class="appbar-sep hidden" id="approvals-sep" aria-hidden="true">|</span>
@@ -3421,12 +3584,12 @@
       <span class="appbar-sep" aria-hidden="true">|</span>
       <button type="button" class="appbar-link" onclick="authSignOut()">Sign Out</button>
     </div>
-    <div class="appbar-status">
-      <span class="appbar-status-gate" id="gateStatus">All sends gated</span>
-      <span class="appbar-status-sep" aria-hidden="true">·</span>
-      <span class="updated"><span class="dot" id="status-dot"></span><span id="lastUpdated">Loading…</span></span>
-    </div>
   </div>
+</div>
+
+<!-- Send-gate status — pinned to the bottom-right corner on every page -->
+<div class="gate-badge" id="gateBadge">
+  <span class="dot"></span><span id="gateStatus">All sends gated</span>
 </div>
 
 <!-- Product tour scaffolding (hidden by default) -->
@@ -3771,15 +3934,15 @@ Clean margins are needed before we can proceed with the design"></textarea>
 
   <div class="cc-stat-row">
     <div class="cc-stat-card">
-      <div class="label"><span class="icon">📄</span> Total Logs</div>
+      <div class="label">Total Logs</div>
       <div class="value" id="cc-stat-total">–</div>
     </div>
     <div class="cc-stat-card">
-      <div class="label"><span class="icon" style="background:#E9F5FD;">🕓</span> Today</div>
+      <div class="label">Today</div>
       <div class="value" id="cc-stat-today">–</div>
     </div>
     <div class="cc-stat-card">
-      <div class="label"><span class="icon" style="background:#DDF4E4; color:#157031;">📈</span> Top Action</div>
+      <div class="label">Top Action</div>
       <div class="value compact" id="cc-stat-top">–</div>
     </div>
   </div>
@@ -4051,6 +4214,16 @@ Clean margins are needed before we can proceed with the design"></textarea>
 
 <!-- Metrics · By Doctor modal — opened from the appbar 📊 button. -->
 <!-- Admin Approvals modal — opens from the "Approvals" link (admins only). -->
+<div class="modal-overlay" id="cc-stage-modal" onclick="if(event.target===this)closeStageModal()">
+  <div class="modal-panel" style="max-width: 1040px;">
+    <div class="modal-header">
+      <h3><span id="cc-stage-modal-title">Stage</span> <span class="cc-stage-modal-pill" id="cc-stage-modal-count">0</span></h3>
+      <button class="modal-close" onclick="closeStageModal()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body cc-stage-grid" id="cc-stage-modal-body"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="approvals-modal" onclick="if(event.target===this)closeApprovals()">
   <div class="modal-panel" style="max-width: 880px;">
     <div class="modal-header">
