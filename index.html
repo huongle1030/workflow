@@ -710,6 +710,23 @@
   .note-banner .text {
     white-space: pre-wrap; line-height: 1.5;
   }
+  /* One message body within a thread. A dashed divider sits only BETWEEN successive
+     messages (adjacent-sibling rule), so a reply chain is easy to scan. */
+  .note-banner .thread-msg {
+    white-space: pre-wrap; line-height: 1.5; padding: 4px 0;
+  }
+  .note-banner .thread-msg + .thread-msg {
+    margin-top: 8px; padding-top: 12px; border-top: 1px dashed rgba(142,101,16,0.30);
+  }
+  .note-banner.scan-reply .thread-msg + .thread-msg { border-top-color: rgba(22,85,122,0.25); }
+  /* Scan Submission email card — bluish accent to distinguish the inbound doctor email
+     from the yellow "Most Recent Communication" card. */
+  .note-banner.scan-reply {
+    background: #EEF6FC; border-color: #D6EAF7; color: #16435F;
+  }
+  .note-banner.scan-reply .label,
+  .note-banner.scan-reply .note-meta,
+  .note-banner.scan-reply .note-subject { color: #16557A; }
   /* "CC'd to" sub-card — same yellow family as Account Preferences. Used inside the Most
      Recent Communication card (outbound/approval) and on inbound reply cards. */
   .cc-banner {

@@ -73,7 +73,12 @@ function isNewOrUnclassified(r) {
   return r.reason === 'scan_submission_ack' || !String(r.strategic_partner || '').trim();
 }
 
-let state = { outbound: [], inbound: [], audit: [] };
+// state.scanSub  = "Scan Submission" sub-tab rows (triage_bucket = outbound_only; scan-acks).
+// state.pendingOut = "Pending Outbound" sub-tab rows (triage_bucket = pending_approval; everything else).
+// NOTE: the DOM ids/permission keys keep their historical names — data-tab/panel/badge/list
+// "outbound" => the Scan Submission tab, "approval" => the Pending Outbound tab. Only the JS
+// identifiers were de-inverted to match the renamed UI labels.
+let state = { scanSub: [], inbound: [], audit: [] };
 let auditWindowDays = parseInt(localStorage.getItem('skdla_audit_window') || '7', 10);
 // Tracks accounts we've already kicked off summary generation for in this
 // session, so the lazy backfill never fires twice for the same account.
@@ -665,7 +670,10 @@ async function queueRescheduleCheck(caseNumber) {
   try {
     await callRpc('queue_reschedule_check', { p_case_number: caseNumber });
     toast('Draft created — open Pending Outbound to review', 'ok');
-    const outboundTab = document.querySelector('#tabs-outreach .tab[data-tab="outbound"]');
+    // reschedule_check lands in the pending_approval bucket, which renders in the
+    // "Pending Outbound" sub-tab (data-tab="approval"), NOT the "Scan Submission"
+    // sub-tab (data-tab="outbound"). Switch there so the new draft is visible.
+    const outboundTab = document.querySelector('#tabs-outreach .tab[data-tab="approval"]');
     if (outboundTab) outboundTab.click();
     await loadAll();
   } catch (e) {
@@ -704,10 +712,15 @@ function exportReschedule() {
 }
 
 async function loadOutbound() {
-  // Reads the triage view (v_pending_outbound + a triage_bucket derived from
-  // case_communications) and splits it across the two Pending sub-tabs:
-  //   outbound_only    -> Pending Outbound (scan-submission acks ONLY)
-  //   pending_approval -> Pending Approval (every other case, any comm count)
+  // Two sources feed the two Pending sub-tabs:
+  //   "Scan Submission" sub-tab  -> state.scanSub  -> v_pending_outbound_triage (outbound_only bucket; scan-ack drafts)
+  //   "Pending Outbound" sub-tab -> state.pendingOut -> v_fullarch_wip_outbound (the Full-Arch WIP worklist)
+  //
+  // The Pending Outbound tab is the Full-Arch work-in-progress worklist: ONE card per Full-Arch
+  // case with Case Status = 'WIP' (Business Unit = 'Full Arch'), whether or not any email has been
+  // drafted/communicated yet. Cases that already have a pending draft carry attempt_id (rendered as
+  // the normal approve/send card); cases with no draft (has_draft = false) render a read-only card
+  // with Lookup + "Draft outreach email". See migration 20260605_03_v_fullarch_wip_outbound.
   let rows;
   if (inCowork) {
     rows = await runMcpSql('SELECT * FROM v_pending_outbound_triage LIMIT 2000') || [];
@@ -716,27 +729,34 @@ async function loadOutbound() {
   }
   // Hide temporarily-disabled partners (e.g. SKDLA-TRI Dental) from every outbound view.
   const visibleRows = rows.filter(r => !isHiddenPartner(r.strategic_partner));
-  state.outboundAll = visibleRows;
-  state.outbound = visibleRows.filter(r => r.triage_bucket === 'outbound_only');
-  state.approval  = visibleRows.filter(r => r.triage_bucket === 'pending_approval');
-  document.getElementById('badge-out').textContent = state.outbound.length;
-  // "Pending Out" KPI tile reflects the Pending Outbound sub-tab (pending_approval
-  // bucket), NOT the Scan Submission sub-tab (outbound_only bucket).
-  document.getElementById('stat-out').textContent = state.approval.length;
+  state.scanSubAll = visibleRows;
+  state.scanSub = visibleRows.filter(r => r.triage_bucket === 'outbound_only');
+  // Pending Outbound = Full-Arch WIP worklist (separate view, not the triage split).
+  let faRows;
+  if (inCowork) {
+    faRows = await runMcpSql('SELECT * FROM v_fullarch_wip_outbound LIMIT 2000') || [];
+  } else {
+    faRows = await restGet('/rest/v1/v_fullarch_wip_outbound?select=*&limit=2000') || [];
+  }
+  state.pendingOut = faRows.filter(r => !isHiddenPartner(r.strategic_partner));
+  document.getElementById('badge-out').textContent = state.scanSub.length;
+  // "Pending Out" KPI tile reflects the "Pending Outbound" sub-tab (state.pendingOut /
+  // pending_approval bucket), NOT the "Scan Submission" sub-tab (state.scanSub).
+  document.getElementById('stat-out').textContent = state.pendingOut.length;
   const ba = document.getElementById('badge-approval');
-  if (ba) ba.textContent = state.approval.length;
+  if (ba) ba.textContent = state.pendingOut.length;
   updatePendingBadge();
   await loadAttachmentsForOutbound();
   await loadSenderMailboxesForOutbound();
-  renderOutbound();
-  renderApproval();
+  renderScanSub();
+  renderPendingOut();
 }
 
 // Attach the real sender_mailbox (clearchoice@ / implants@) to each outbound/approval row so
 // the "Implants" filter bucket can key on the actual mailbox. The triage view doesn't expose
 // it, so we bulk-read it from dr_outreach_attempts by attempt_id.
 async function loadSenderMailboxesForOutbound() {
-  const all = [...(state.outbound || []), ...(state.approval || [])];
+  const all = [...(state.scanSub || []), ...(state.pendingOut || [])];
   const ids = all.map(r => r.attempt_id).filter(Boolean);
   if (!ids.length) return;
   let rows = [];
@@ -757,7 +777,7 @@ async function loadSenderMailboxesForOutbound() {
 // can show file chips. Metadata only (no bytes); the sender downloads the actual files.
 async function loadAttachmentsForOutbound() {
   for (const k of Object.keys(attachmentsByAttempt)) delete attachmentsByAttempt[k];
-  const ids = [...(state.outbound || []), ...(state.approval || [])]
+  const ids = [...(state.scanSub || []), ...(state.pendingOut || [])]
     .map(r => r.attempt_id).filter(Boolean);
   if (!ids.length) return;
   let rows = [];
@@ -776,8 +796,8 @@ async function loadAttachmentsForOutbound() {
 function updatePendingBadge() {
   const el = document.getElementById('badge-pending');
   if (!el) return;
-  el.textContent = (state.outbound?.length || 0)
-                 + (state.approval?.length || 0)
+  el.textContent = (state.scanSub?.length || 0)
+                 + (state.pendingOut?.length || 0)
                  + visibleInbound().length;   // exclude hidden senders
 }
 
@@ -934,6 +954,40 @@ function topEmailMessage(body) {
   return stripExternalCaution(top);   // drop any "EXTERNAL SENDER" gateway banner
 }
 
+// Clean one segment of a scraped email thread down to just its body: drop the quote-header
+// block (From:/Sent:/To:/Cc:/Subject:/Date lines, "On … wrote:", "----- Original Message
+// -----", underscore rules) and the EXTERNAL SENDER banner.
+function cleanMessageBody(seg) {
+  let s = stripExternalCaution(decodeHtmlEntities(seg || '').replace(/\r\n?/g, '\n'));
+  s = s.replace(/-{2,}\s*Original Message\s*-{2,}/gi, '');
+  s = s.replace(/On\s[\s\S]{1,200}?\bwrote:/gi, '');
+  s = s.replace(/^\s*(From|Sent|To|Cc|Bcc|Subject|Date|Reply-To|Importance)\s*:.*$/gim, '');
+  s = s.replace(/^_{6,}.*$/gm, '');
+  return s.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Split a scraped email thread into individual message bodies (newest first), each cleaned
+// by cleanMessageBody so the Most Recent Communication card shows only what each person
+// wrote — no header clutter — with a divider between messages.
+function splitEmailThread(text) {
+  const norm = (text || '').replace(/\r\n?/g, '\n');
+  if (!norm.trim()) return [];
+  const BOUNDARY = /(?:\n|^)\s*(?:-{2,}\s*Original Message\s*-{2,}|_{6,}|From\s*:\s|On\s[\s\S]{1,200}?\bwrote:)/gi;
+  const idxs = [];
+  let m;
+  while ((m = BOUNDARY.exec(norm)) !== null) {
+    idxs.push(m.index);
+    if (BOUNDARY.lastIndex === m.index) BOUNDARY.lastIndex++;
+  }
+  const cuts = Array.from(new Set([0, ...idxs, norm.length])).sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const cleaned = cleanMessageBody(norm.slice(cuts[i], cuts[i + 1]));
+    if (cleaned) out.push(cleaned);
+  }
+  return out;
+}
+
 // Wrap any bare exocad webview URLs in <a> tags so the link is clickable in
 // the preview even when the email template pasted it as plain text.
 // Also strips the in-body "View Design in exocad WebView" button — the
@@ -1059,10 +1113,10 @@ function buildOutboundBody(rawHtml, exocadUrl) {
 }
 
 // Sort + filter state for Pending Outbound
-const outboundFilter = { sort: 'revenue_desc', revenue: '', partner: '', reason: '', search: '' };
-function setOutboundSort(value) { outboundFilter.sort = value; renderOutbound(); }
+const scanSubFilter = { sort: 'revenue_desc', revenue: '', partner: '', reason: '', search: '' };
+function setScanSubSort(value) { scanSubFilter.sort = value; renderScanSub(); }
 // Outbound filter options shared by the custom dropdown
-const OUTBOUND_FILTER_OPTIONS = [
+const SCANSUB_FILTER_OPTIONS = [
   { value: '',        label: 'All drafts' },
   { value: 'haslink', label: 'Has link (sendable)' },
   { value: 'nolink',  label: 'No link yet' },
@@ -1074,17 +1128,17 @@ const OUTBOUND_FILTER_OPTIONS = [
 // Revenue tiers are hidden from roles without the `outbound.revenue` capability
 // (design_approver). Returns the filter options that role may actually use.
 const REVENUE_FILTER_VALUES = ['high', 'mid', 'low'];
-function visibleOutboundFilterOptions() {
-  if (can(CAPABILITIES.OUTBOUND_REVENUE)) return OUTBOUND_FILTER_OPTIONS;
-  return OUTBOUND_FILTER_OPTIONS.filter(o => !REVENUE_FILTER_VALUES.includes(o.value));
+function visibleScanSubFilterOptions() {
+  if (can(CAPABILITIES.OUTBOUND_REVENUE)) return SCANSUB_FILTER_OPTIONS;
+  return SCANSUB_FILTER_OPTIONS.filter(o => !REVENUE_FILTER_VALUES.includes(o.value));
 }
 
-function setOutboundRevenue(value) {
-  outboundFilter.revenue = value;
+function setScanSubRevenue(value) {
+  scanSubFilter.revenue = value;
   const dd = document.getElementById('outbound-filter-dd');
   if (dd) dd.classList.toggle('has-value', !!value);
   closeFilterDd();
-  renderOutbound();
+  renderScanSub();
 }
 
 function toggleFilterDd(ev) {
@@ -1096,12 +1150,12 @@ function toggleFilterDd(ev) {
 function closeFilterDd() {
   document.getElementById('outbound-filter-dd')?.classList.remove('open');
 }
-function setOutboundPartner(value) {
-  outboundFilter.partner = value;
+function setScanSubPartner(value) {
+  scanSubFilter.partner = value;
   const dd = document.getElementById('outbound-partner-dd');
   if (dd) dd.classList.toggle('has-value', !!value);
   closePartnerDd();
-  renderOutbound();
+  renderScanSub();
 }
 
 function togglePartnerDd(ev) {
@@ -1112,12 +1166,12 @@ function closePartnerDd() {
   document.getElementById('outbound-partner-dd')?.classList.remove('open');
 }
 // Reason ("Type") filter — design approval / reschedule check / scan submission / etc.
-function setOutboundReason(value) {
-  outboundFilter.reason = value;
+function setScanSubReason(value) {
+  scanSubFilter.reason = value;
   const dd = document.getElementById('outbound-reason-dd');
   if (dd) dd.classList.toggle('has-value', !!value);
   closeReasonDd();
-  renderOutbound();
+  renderScanSub();
 }
 function toggleReasonDd(ev) {
   if (ev) ev.stopPropagation();
@@ -1137,10 +1191,10 @@ function onGlobalSearch(value) {
   // Apply to whichever tab is open
   const activeTab = currentOutreachTab();
   if (activeTab === 'outbound') {
-    outboundFilter.search = globalSearch.value;
-    renderOutbound();
+    scanSubFilter.search = globalSearch.value;
+    renderScanSub();
   } else if (activeTab === 'approval') {
-    renderApproval();
+    renderPendingOut();
   } else if (activeTab === 'inbound') {
     // Mirror into the dedicated inbound search box if it exists
     const inboundBox = document.getElementById('inbound-search');
@@ -1183,7 +1237,7 @@ function updateGlobalSearchScope() {
   hint.textContent = labelMap[activeTab] || 'All cases';
   // Clear cross-tab state when switching tabs to avoid stale filtering
   if (activeTab === 'outbound') {
-    input.value = outboundFilter.search || '';
+    input.value = scanSubFilter.search || '';
   } else if (activeTab === 'inbound') {
     const inboundBox = document.getElementById('inbound-search');
     input.value = inboundBox ? inboundBox.value : '';
@@ -1200,7 +1254,7 @@ function matchesSearch(needle, haystack) {
 }
 
 function populatePartnerDropdown() {
-  const rows = state.outbound || [];
+  const rows = state.scanSub || [];
   const labelEl    = document.getElementById('outbound-partner-label');
   const btnCountEl = document.getElementById('outbound-partner-count');
   const menuEl     = document.getElementById('outbound-partner-menu');
@@ -1219,7 +1273,7 @@ function populatePartnerDropdown() {
   const labelFor = (v) => SPECIAL_LABELS[v] || v || 'All partners';
   const special = new Set(['', IMPLANTS_FILTER_VALUE, NEW_OFFICE_FILTER_VALUE]);
   const partners = Object.keys(counts).filter(k => !special.has(k)).sort((a, b) => a.localeCompare(b));
-  const current = outboundFilter.partner || '';
+  const current = scanSubFilter.partner || '';
 
   labelEl.textContent = labelFor(current);
   const btnCount = counts[current] ?? rows.length;
@@ -1236,7 +1290,7 @@ function populatePartnerDropdown() {
     const sel = o.value === current ? ' selected' : '';
     const zero = c === 0 ? ' zero' : '';
     const safeValue = (o.value || '').replace(/'/g, "\\'");
-    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setOutboundPartner('${safeValue}')">
+    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setScanSubPartner('${safeValue}')">
       <span>${esc(o.label)}</span>
       <span class="chip-count${zero}">${c}</span>
     </div>`;
@@ -1247,7 +1301,7 @@ function populatePartnerDropdown() {
 // in the current outbound set (e.g. Design Approval, Reschedule Check, Scan Submission),
 // each with a live count, plus an "All types" reset.
 function populateReasonDropdown() {
-  const rows = state.outbound || [];
+  const rows = state.scanSub || [];
   const labelEl    = document.getElementById('outbound-reason-label');
   const btnCountEl = document.getElementById('outbound-reason-count');
   const menuEl     = document.getElementById('outbound-reason-menu');
@@ -1261,7 +1315,7 @@ function populateReasonDropdown() {
   const reasons = Object.keys(counts)
     .filter(k => k !== '')
     .sort((a, b) => (REASON_LABEL[a] || a).localeCompare(REASON_LABEL[b] || b));
-  const current = outboundFilter.reason || '';
+  const current = scanSubFilter.reason || '';
 
   labelEl.textContent = current ? (REASON_LABEL[current] || current) : 'All types';
   const btnCount = counts[current] ?? rows.length;
@@ -1275,33 +1329,33 @@ function populateReasonDropdown() {
     const sel = o.value === current ? ' selected' : '';
     const zero = c === 0 ? ' zero' : '';
     const safeValue = (o.value || '').replace(/'/g, "\\'");
-    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setOutboundReason('${safeValue}')">
+    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setScanSubReason('${safeValue}')">
       <span>${esc(o.label)}</span>
       <span class="chip-count${zero}">${c}</span>
     </div>`;
   }).join('');
 }
 
-function sortedFilteredOutbound() {
-  let rows = (state.outbound || []).slice();
+function sortedFilteredScanSub() {
+  let rows = (state.scanSub || []).slice();
   // Apply filters
-  if (outboundFilter.revenue === 'high') rows = rows.filter(r => Number(r.case_revenue || 0) >= 5000);
-  else if (outboundFilter.revenue === 'mid')  rows = rows.filter(r => { const n = Number(r.case_revenue || 0); return n >= 2000 && n < 5000; });
-  else if (outboundFilter.revenue === 'low')  rows = rows.filter(r => Number(r.case_revenue || 0) < 2000);
-  else if (outboundFilter.revenue === 'overdue') rows = rows.filter(r => r.will_miss_due_date);
-  else if (outboundFilter.revenue === 'nolink')  rows = rows.filter(r => !(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url)));
-  else if (outboundFilter.revenue === 'haslink') rows = rows.filter(r =>  (r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url)));
-  if (outboundFilter.partner === IMPLANTS_FILTER_VALUE) {
+  if (scanSubFilter.revenue === 'high') rows = rows.filter(r => Number(r.case_revenue || 0) >= 5000);
+  else if (scanSubFilter.revenue === 'mid')  rows = rows.filter(r => { const n = Number(r.case_revenue || 0); return n >= 2000 && n < 5000; });
+  else if (scanSubFilter.revenue === 'low')  rows = rows.filter(r => Number(r.case_revenue || 0) < 2000);
+  else if (scanSubFilter.revenue === 'overdue') rows = rows.filter(r => r.will_miss_due_date);
+  else if (scanSubFilter.revenue === 'nolink')  rows = rows.filter(r => !(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url)));
+  else if (scanSubFilter.revenue === 'haslink') rows = rows.filter(r =>  (r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url)));
+  if (scanSubFilter.partner === IMPLANTS_FILTER_VALUE) {
     rows = rows.filter(r => (r.sender_mailbox || '') === IMPLANTS_MAILBOX);
-  } else if (outboundFilter.partner === NEW_OFFICE_FILTER_VALUE) {
+  } else if (scanSubFilter.partner === NEW_OFFICE_FILTER_VALUE) {
     rows = rows.filter(isNewOrUnclassified);
-  } else if (outboundFilter.partner) {
-    rows = rows.filter(r => (r.strategic_partner || '') === outboundFilter.partner);
+  } else if (scanSubFilter.partner) {
+    rows = rows.filter(r => (r.strategic_partner || '') === scanSubFilter.partner);
   }
-  if (outboundFilter.reason) rows = rows.filter(r => r.reason === outboundFilter.reason);
+  if (scanSubFilter.reason) rows = rows.filter(r => r.reason === scanSubFilter.reason);
   // Apply global text search
-  if (outboundFilter.search) {
-    const q = outboundFilter.search;
+  if (scanSubFilter.search) {
+    const q = scanSubFilter.search;
     rows = rows.filter(r => {
       const hay = [
         r.case_number, r.case_no, r.patient_name, r.practice_name,
@@ -1313,7 +1367,7 @@ function sortedFilteredOutbound() {
   }
   // Apply sort
   const ts = (s) => s ? new Date(s).getTime() : 0;
-  switch (outboundFilter.sort) {
+  switch (scanSubFilter.sort) {
     case 'newest':       rows.sort((a, b) => ts(b.proposed_at) - ts(a.proposed_at)); break;
     case 'revenue_desc': rows.sort((a, b) => Number(b.case_revenue || 0) - Number(a.case_revenue || 0)); break;
     case 'revenue_asc':  rows.sort((a, b) => Number(a.case_revenue || 0) - Number(b.case_revenue || 0)); break;
@@ -1325,10 +1379,10 @@ function sortedFilteredOutbound() {
   return rows;
 }
 
-function renderOutbound() {
+function renderScanSub() {
   const root = document.getElementById('list-outbound');
   const countEl = document.getElementById('outbound-count');
-  if (!state.outbound.length) {
+  if (!state.scanSub.length) {
     const hadError = lastResponse && lastResponse._error;
     let msg;
     if (hadError) {
@@ -1342,12 +1396,12 @@ function renderOutbound() {
     return;
   }
   // The Scan Submission sub-tab has no filter toolbar — show every scan-ack draft.
-  // The global search bar still narrows the list via outboundFilter.search.
-  const filtered = sortedFilteredOutbound();
+  // The global search bar still narrows the list via scanSubFilter.search.
+  const filtered = sortedFilteredScanSub();
   if (countEl) {
-    countEl.textContent = (outboundFilter.search && filtered.length !== state.outbound.length)
-      ? `Showing ${filtered.length} of ${state.outbound.length}`
-      : `${state.outbound.length} total`;
+    countEl.textContent = (scanSubFilter.search && filtered.length !== state.scanSub.length)
+      ? `Showing ${filtered.length} of ${state.scanSub.length}`
+      : `${state.scanSub.length} total`;
   }
   if (!filtered.length) {
     root.innerHTML = '<div class="empty"><strong>No drafts match your search.</strong><br/>Clear the search to see all.</div>';
@@ -1371,8 +1425,8 @@ function fmtBytes(n) {
 // renderOutboundCard, so an action handler that only has the id can recover the row — e.g.
 // to honor the scan-ack exemption on the RX gate).
 function findOutboundRow(attemptId) {
-  return (state.outbound || []).find(r => r.attempt_id === attemptId)
-      || (state.approval || []).find(r => r.attempt_id === attemptId)
+  return (state.scanSub || []).find(r => r.attempt_id === attemptId)
+      || (state.pendingOut || []).find(r => r.attempt_id === attemptId)
       || null;
 }
 
@@ -1451,8 +1505,8 @@ function renderAttachZone(attemptId) {
 // Re-render the two outbound lists in place, preserving expanded/edit/scroll context.
 function rerenderOutboundLists() {
   const ctx = captureUiContext();
-  renderOutbound();
-  renderApproval();
+  renderScanSub();
+  renderPendingOut();
   requestAnimationFrame(() => restoreUiContext(ctx));
 }
 
@@ -1568,6 +1622,12 @@ function renderOutboundCard(r) {
     // exocad link — they reply to the doctor who emailed in a scan. Bypass the
     // exocad link gate for them so they can be approved like any other draft.
     const isScanAck = r.reason === 'scan_submission_ack';
+    // Only @aspendental.com scan submissions get the pre-filled template + Aspen Labs job
+    // aid. Every other scan submission shows a blank draft the coordinator writes themselves,
+    // and "Approve & Send" stays disabled until they actually write a body (needsCompose).
+    const isAspenScan = isScanAck && /@aspendental\.com\s*$/i.test(r.to_email || '');
+    const bodyHasText = !!String(r.body_html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim();
+    const needsCompose = isScanAck && !isAspenScan && !bodyHasText;
     const uploading = !!uploadingByAttempt[r.attempt_id];
     // RX-attachment send gate: a real case draft can't be sent until an RX PDF is attached.
     // Scan-submission acks are exempt (they carry the job-aid PDF, not an RX).
@@ -1593,11 +1653,13 @@ function renderOutboundCard(r) {
     // regardless of age — shown with its full details (the same content the Case
     // Lookup timeline shows). Rendered as a lighter-yellow sub-card to the left
     // of Account Preferences.
-    let commBody = decodeHtmlEntities((r.most_recent_comm_body || '').replace(/\r\n?/g, '\n')).trim();
-    // Emails store the whole thread — show only the most recent message's body.
-    if (r.most_recent_comm_medium === 'email') commBody = topEmailMessage(commBody);
+    // For emails, split the thread into individual message bodies (headers stripped) so a
+    // long reply chain is easy to read; phone/note media show as a single cleaned block.
+    const commMessages = (r.most_recent_comm_medium === 'email')
+      ? splitEmailThread(r.most_recent_comm_body || '')
+      : [decodeHtmlEntities((r.most_recent_comm_body || '').replace(/\r\n?/g, '\n')).trim()].filter(Boolean);
     const commSubject = (r.most_recent_comm_subject || '').trim();
-    const hasNote = !!(commBody || commSubject);
+    const hasNote = !!(commMessages.length || commSubject);
     const COMM_MEDIUM_ICON = { phone: '📞', email: '✉️', note: '📝' };
     const commIcon = COMM_MEDIUM_ICON[r.most_recent_comm_medium] || '';
     const commMeta = [r.most_recent_comm_actor, r.most_recent_comm_at ? fmtDate(r.most_recent_comm_at) : '']
@@ -1610,10 +1672,30 @@ function renderOutboundCard(r) {
         <div class="label">${commIcon ? commIcon + ' ' : ''}Most Recent Communication</div>
         ${commMeta ? `<div class="note-meta">${commMeta}</div>` : ''}
         ${commSubject ? `<div class="note-subject">${esc(commSubject)}</div>` : ''}
-        ${commBody ? `<div class="text">${esc(commBody)}</div>` : ''}
+        ${commMessages.map(b => `<div class="thread-msg">${esc(b)}</div>`).join('')}
         ${commCc}
       </div>` : '';
-    const hasSide = !!(r.account_preferences || r.prefs_summary_headline || hasNote);
+    // Scan-submission email card: the doctor's original inbound scan email (from
+    // dr_outreach_replies via scan_ack_attempt_id). Styled like the comm card so the
+    // coordinator can see what was submitted while writing/approving the ack.
+    // Show the whole scan-submission email body (just drop the EXTERNAL SENDER banner).
+    let scanReplyBody = decodeHtmlEntities((r.scan_reply_body || '').replace(/\r\n?/g, '\n')).trim();
+    scanReplyBody = stripExternalCaution(scanReplyBody);
+    const scanReplyFrom = (r.scan_reply_from || r.to_email || '').trim();
+    const hasScanReply = isScanAck && !!(scanReplyBody || r.scan_reply_subject || scanReplyFrom);
+    const scanReplyMeta = [scanReplyFrom, r.scan_reply_at ? fmtDate(r.scan_reply_at) : '']
+      .filter(Boolean).map(esc).join(' · ');
+    const scanReplyCard = hasScanReply ? `
+      <div class="note-banner scan-reply">
+        <div class="label">📩 Scan Submission Email</div>
+        ${scanReplyMeta ? `<div class="note-meta">${scanReplyMeta}</div>` : ''}
+        ${r.scan_reply_subject ? `<div class="note-subject">${esc(r.scan_reply_subject)}</div>` : ''}
+        ${scanReplyBody ? `<div class="text">${esc(scanReplyBody)}</div>` : ''}
+      </div>` : '';
+    // Scan-submission cards don't show Account Preferences (the coordinator is replying to
+    // the inbound scan email, not composing an account-tailored outreach).
+    const showPrefs = !isScanAck && !!(r.account_preferences || r.prefs_summary_headline);
+    const hasSide = !!(showPrefs || hasNote || hasScanReply);
     return `
     <div class="item reason-${r.reason}" data-id="${r.attempt_id}">
       <div class="item-head" onclick="toggleItem('${r.attempt_id}')">
@@ -1643,7 +1725,7 @@ function renderOutboundCard(r) {
           <div class="preview">
             <div class="preview-subject">${esc(r.subject)}</div>
             ${buildOutboundBody(r.body_html, r.exocad_viewer_url)}
-            ${isScanAck ? `<div class="attach-row" title="This PDF is attached automatically by the sender when you Approve &amp; Send — it is not stored on the draft, so it only appears on the email that goes out."><span class="attach-clip">📎</span> Onix Fixed ordering in AspenLabs.pdf <span class="attach-note">(attached on send)</span></div>` : ''}
+            ${isAspenScan ? `<div class="attach-row" title="This PDF is attached automatically by the sender when you Approve &amp; Send — it is not stored on the draft, so it only appears on the email that goes out."><span class="attach-clip">📎</span> Onix Fixed ordering in AspenLabs.pdf <span class="attach-note">(attached on send)</span></div>` : ''}
             ${renderAttachZone(r.attempt_id)}
             <div class="cc-field" onclick="event.stopPropagation();">
               <label for="cc-${r.attempt_id}">CC (optional)</label>
@@ -1656,8 +1738,9 @@ function renderOutboundCard(r) {
           </div>
           ${hasSide ? `
             <div class="outbound-side">
+              ${scanReplyCard}
               ${noteCard}
-              ${r.account_preferences || r.prefs_summary_headline ? `
+              ${showPrefs ? `
                 <div class="prefs-banner">
                   <div class="label">Account Preferences ${r.prefs_auto ? '(auto)' : '(curated)'}</div>
                   ${r.prefs_summary_headline ? `
@@ -1686,7 +1769,7 @@ function renderOutboundCard(r) {
         `}
         <div class="actions">
           ${hasExocadLink ? `<button class="act view-exocad" onclick="window.open('${esc(r.exocad_viewer_url)}', '_blank', 'noopener')">View in Exocad</button>` : ''}
-          <button class="act approve" onclick="approve('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : (!rxOk ? 'disabled title="Attach the RX PDF first"' : ''))}>Approve &amp; Send</button>
+          <button class="act approve" onclick="approve('${r.attempt_id}')" ${needsCompose ? 'disabled title="Write the email first — use Edit Then Send"' : (!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : (!rxOk ? 'disabled title="Attach the RX PDF first"' : '')))}>Approve &amp; Send</button>
           <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : (!rxOk ? 'disabled title="Attach the RX PDF first"' : ''))}>Edit Then Send</button>
           <button class="act reject" onclick="reject('${r.attempt_id}')">Reject</button>
           ${isScanAck ? '' : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
@@ -1718,16 +1801,17 @@ function renderOutboundCard(r) {
     </div>`;
 }
 
-// Pending Approval sub-tab: every non-scan-ack case (triage_bucket pending_approval; the bucket
-// no longer keys on comm count as of 20260605_01). Reuses the outbound card (so Approve/Edit/
-// Reject still work) and shows the "in conversation" chip when the case has a logged comm.
-function renderApproval() {
+// "Pending Outbound" sub-tab (state.pendingOut): the Full-Arch WIP worklist from
+// v_fullarch_wip_outbound — one card per Full-Arch case with Case Status = 'WIP', whether or not
+// any email exists. Cases with a pending draft (attempt_id) reuse the outbound card (Approve/Edit/
+// Reject); cases with no draft render renderFullArchWipCard (read-only + Lookup + Draft outreach).
+function renderPendingOut() {
   const root = document.getElementById('list-approval');
   if (!root) return;
   const countEl = document.getElementById('approval-count');
-  const all = state.approval || [];
+  const all = state.pendingOut || [];
   if (!all.length) {
-    root.innerHTML = '<div class="empty"><strong>Nothing awaiting approval.</strong><br/>Doctor design-approval cases (everything except scan-submission acks) will appear here.</div>';
+    root.innerHTML = '<div class="empty"><strong>No Full Arch cases in progress.</strong><br/>Every Full Arch case with status WIP shows here — a card appears whether or not any email has been drafted yet.</div>';
     if (countEl) countEl.textContent = '';
     return;
   }
@@ -1736,13 +1820,151 @@ function renderApproval() {
     ? all.filter(r => [r.case_number, r.pan_number, r.dr_last_name, r.practice_name, r.to_email, r.subject]
         .some(v => String(v || '').toLowerCase().includes(q)))
     : all.slice();
-  // Newest communication first.
-  rows.sort((a, b) => new Date(b.evidence_at || 0) - new Date(a.evidence_at || 0));
+  // Cases needing attention first: existing drafts on top, then most recent communication,
+  // then everything else by case number (stable) so the long no-draft worklist is browsable.
+  rows.sort((a, b) => {
+    const ad = a.attempt_id ? 1 : 0, bd = b.attempt_id ? 1 : 0;
+    if (ad !== bd) return bd - ad;
+    const at = new Date(a.evidence_at || 0), bt = new Date(b.evidence_at || 0);
+    if (+at !== +bt) return bt - at;
+    return String(a.case_number || '').localeCompare(String(b.case_number || ''));
+  });
   if (countEl) {
     countEl.textContent = q ? `Showing ${rows.length} of ${all.length}` : `${all.length} total`;
   }
-  root.innerHTML = rows.map(renderOutboundCard).join('');
+  // Draft cards reuse the outbound card (Approve/Edit/Reject). No-draft Full-Arch WIP cases
+  // render a read-only card with Lookup + "Draft outreach email".
+  root.innerHTML = rows.map(r => r.attempt_id ? renderOutboundCard(r) : renderFullArchWipCard(r)).join('');
   lazyBackfillPrefSummaries();
+}
+
+// Read-only worklist card for a Full-Arch WIP case that has no email draft yet. Mirrors the visual
+// language of renderOutboundCard (chips + Most Recent Communication + Account Preferences) but
+// offers no Approve/Send (there's nothing to send) — just "Lookup Case" and "Draft outreach email",
+// which composes a design-approval draft so the case turns into a normal approvable card.
+function renderFullArchWipCard(r) {
+  const cardId = 'case-' + r.case_number;
+  // Revenue chip (same thresholds as the outbound card).
+  const rev = Number(r.case_revenue || 0);
+  const revClass = rev >= 5000 ? 'high' : rev >= 2000 ? 'mid' : '';
+  const revStr = rev > 0 ? '$' + rev.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '';
+  const revenueChip = (can(CAPABILITIES.OUTBOUND_REVENUE) && revStr)
+    ? '<span class="revenue-chip ' + revClass + '">' + revStr + '</span>' : '';
+  // Strategic partner chip.
+  const sp = r.strategic_partner || '';
+  let spClass = '';
+  if (/clearchoice/i.test(sp)) spClass = 'clearchoice';
+  else if (/aspen/i.test(sp)) spClass = 'aspen';
+  else if (/tri/i.test(sp)) spClass = 'tri';
+  else if (/incisive/i.test(sp)) spClass = 'incisive';
+  else if (/heartland|mb2|western|legacy/i.test(sp)) spClass = 'other';
+  const partnerChip = sp ? '<span class="partner-chip ' + spClass + '">' + esc(sp) + '</span>' : '';
+  const who = esc(r.dr_pref || 'Dr.') + ' ' + esc(r.dr_last_name || '') + ' · ' + esc(r.practice_name || '');
+  const triageChip = r.most_recent_comm_at
+    ? '<span class="triage-chip confirmed" title="At least one communication logged on this case">✓ in conversation</span>'
+    : '<span class="triage-chip" title="No communication logged on this case yet">No contact yet</span>';
+  const missChip = r.will_miss_due_date
+    ? '<span class="activity-chip miss">⚠ Will miss due date · ' + r.days_late_if_approved_now + 'd late</span>'
+    : '';
+  // Most Recent Communication card (same shape as the outbound card's).
+  const commMessages = (r.most_recent_comm_medium === 'email')
+    ? splitEmailThread(r.most_recent_comm_body || '')
+    : [decodeHtmlEntities((r.most_recent_comm_body || '').replace(/\r\n?/g, '\n')).trim()].filter(Boolean);
+  const commSubject = (r.most_recent_comm_subject || '').trim();
+  const hasNote = !!(commMessages.length || commSubject);
+  const COMM_MEDIUM_ICON = { phone: '📞', email: '✉️', note: '📝' };
+  const commIcon = COMM_MEDIUM_ICON[r.most_recent_comm_medium] || '';
+  const commMeta = [r.most_recent_comm_actor, r.most_recent_comm_at ? fmtDate(r.most_recent_comm_at) : '']
+    .filter(Boolean).map(esc).join(' · ');
+  const commCc = renderCcChips(r.most_recent_comm_cc, { always: true, className: 'in-note' });
+  const noteCard = hasNote ? `
+      <div class="note-banner">
+        <div class="label">${commIcon ? commIcon + ' ' : ''}Most Recent Communication</div>
+        ${commMeta ? `<div class="note-meta">${commMeta}</div>` : ''}
+        ${commSubject ? `<div class="note-subject">${esc(commSubject)}</div>` : ''}
+        ${commMessages.map(b => `<div class="thread-msg">${esc(b)}</div>`).join('')}
+        ${commCc}
+      </div>` : '';
+  const showPrefs = !!(r.account_preferences || r.prefs_summary_headline);
+  const hasSide = !!(showPrefs || hasNote);
+  const dueStr = r.doctor_due_date_only ? fmtDate(r.doctor_due_date_only) : '';
+  return `
+    <div class="item reason-${r.reason} no-draft" data-id="${cardId}">
+      <div class="item-head" onclick="toggleItem('${cardId}')">
+        <div>
+          <span class="case-id-block">
+            <span class="pan">${esc(r.pan_number || '-')}</span>
+            <span class="case-sub">Case ${esc(r.case_number)}</span>
+          </span>
+          ${revenueChip}
+          ${partnerChip}
+          ${triageChip}
+          ${missChip}
+          <span class="activity-chip nolink">No outreach drafted yet</span>
+          <div class="who">${who}</div>
+          <div class="subject">${esc(r.current_step || 'Full Arch — WIP')}${r.hold_reason ? ' · ' + esc(r.hold_reason) : ''}</div>
+        </div>
+        <div class="meta">
+          <div class="stamp">WIP</div>
+          ${dueStr ? '<div>Due ' + dueStr + '</div>' : ''}
+          ${r.patient_name ? '<div>' + esc(r.patient_name) + '</div>' : ''}
+        </div>
+      </div>
+      <div class="item-body">
+        <div class="outbound-detail-row ${hasSide ? '' : 'no-prefs'}">
+          <div class="preview">
+            <div class="empty" style="padding:12px 4px;">
+              <strong>No outreach email has been drafted for this case yet.</strong><br/>
+              Use <em>Draft outreach email</em> to compose a doctor design-approval draft — it will appear here for you to edit and send.
+            </div>
+          </div>
+          ${hasSide ? `
+            <div class="outbound-side">
+              ${noteCard}
+              ${showPrefs ? `
+                <div class="prefs-banner">
+                  <div class="label">Account Preferences ${r.prefs_auto ? '(auto)' : '(curated)'}</div>
+                  ${r.prefs_summary_headline ? `
+                    <div class="summary-headline">${esc(r.prefs_summary_headline)}</div>
+                    ${r.prefs_summary_detail ? `<div class="summary-detail">${esc(r.prefs_summary_detail)}</div>` : ''}
+                    ${r.account_preferences ? '<hr class="summary-divider" />' : ''}
+                  ` : ''}
+                  ${r.account_preferences ? `<div class="text">${esc(r.account_preferences)}</div>` : ''}
+                </div>
+              ` : ''}
+            </div>
+          ` : ''}
+        </div>
+        <div class="actions">
+          <button class="act approve" onclick="composeOutreachForCase('${esc(r.case_number)}')">Draft outreach email</button>
+          <button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// "Draft outreach email" on a no-draft Full-Arch WIP card. Composes a design-approval draft via the
+// same intake RPC the Submit Request form uses, then reloads so the case re-appears as a normal
+// approvable card (attempt_id present) ready to edit and send.
+async function composeOutreachForCase(caseNumber) {
+  if (!confirm('Draft a doctor design-approval email for case ' + caseNumber + '?\n\nThe draft will appear here for you to review, edit, and send.')) return;
+  try {
+    const me = loginIdentity();
+    await callRpc('submit_outreach_request', {
+      p_case_number: caseNumber,
+      p_reason: 'design_approval',
+      p_requested_by: me.name,
+      p_issue_summary: 'Full Arch design approval',
+      p_details: null,
+      p_priority: 'standard',
+      p_login_name: me.name,
+      p_login_email: me.email,
+    });
+    toast('Draft created — review it below', 'ok');
+    await loadOutbound();
+  } catch (e) {
+    toast('Could not draft: ' + (e?.message || e), 'err');
+  }
 }
 
 // Looks at the currently-rendered outbound rows. For any that have full
@@ -1756,7 +1978,7 @@ async function lazyBackfillPrefSummaries() {
   // there's no client-side key to gate on; callAnthropic handles auth/errors.
   const targets = [];
   const seen = new Set();
-  for (const r of (state.outboundAll || state.outbound || [])) {
+  for (const r of (state.scanSubAll || state.scanSub || [])) {
     if (!r.account_number) continue;
     if (!r.account_preferences) continue;
     if (r.prefs_summary_headline) continue;
@@ -3067,7 +3289,7 @@ function runTabSideEffects(which) {
   // Re-render the Ready tab on open so the "In queue?" column reflects any
   // drafts the cron has composed since the last refresh.
   if (which === 'ready') renderReady();
-  if (which === 'approval') renderApproval();
+  if (which === 'approval') renderPendingOut();
   if (which === 'editlog') loadEditLog();
   if (which === 'feedback') loadFeedback();
   if (typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
@@ -3115,7 +3337,7 @@ function applyPermissions() {
   document.getElementById('metrics-sep')?.classList.toggle('hidden', !allowMetrics);
 
   // 3) Pending Outbound revenue features (chip/sort/filter).
-  applyOutboundRevenuePermission();
+  applyScanSubRevenuePermission();
 
   // 3b) Admin Approvals link (appbar) — admins only. Populate the count badge
   //     on boot so admins see pending requests without opening the modal.
@@ -3161,20 +3383,20 @@ function activateOutreachTab(which) {
 
 // Strip revenue chip/sort/filter for roles without `outbound.revenue`
 // (design_approver). Idempotent: safe to call more than once.
-function applyOutboundRevenuePermission() {
+function applyScanSubRevenuePermission() {
   if (can(CAPABILITIES.OUTBOUND_REVENUE)) return;
   // Remove the two revenue sort <option>s and switch off a revenue default.
   const sortSel = document.getElementById('outbound-sort');
   if (sortSel) {
     sortSel.querySelectorAll('option[value="revenue_desc"], option[value="revenue_asc"]')
       .forEach(o => o.remove());
-    if (outboundFilter.sort === 'revenue_desc' || outboundFilter.sort === 'revenue_asc') {
-      outboundFilter.sort = 'oldest';
+    if (scanSubFilter.sort === 'revenue_desc' || scanSubFilter.sort === 'revenue_asc') {
+      scanSubFilter.sort = 'oldest';
     }
-    sortSel.value = outboundFilter.sort;
+    sortSel.value = scanSubFilter.sort;
   }
   // Clear any revenue filter tier that may have been selected.
-  if (['high', 'mid', 'low'].includes(outboundFilter.revenue)) outboundFilter.revenue = '';
+  if (['high', 'mid', 'low'].includes(scanSubFilter.revenue)) scanSubFilter.revenue = '';
 }
 
 // =====================================================================
@@ -5488,10 +5710,10 @@ async function refreshApprovals() {
     if (rows.length) { badge.textContent = String(rows.length); badge.style.display = ''; }
     else { badge.style.display = 'none'; }
   }
-  renderApprovals();
+  renderPendingOuts();
 }
 
-function renderApprovals() {
+function renderPendingOuts() {
   const body = document.getElementById('approvals-body');
   if (!body) return;
   const rows = approvalsRows || [];
@@ -5584,10 +5806,10 @@ Object.assign(window, {
   // Global search
   onGlobalSearch, clearGlobalSearch,
   // Outbound filters & sort
-  setOutboundSort,
-  toggleFilterDd, setOutboundRevenue, closeFilterDd,
-  togglePartnerDd, setOutboundPartner, closePartnerDd,
-  toggleReasonDd, setOutboundReason, closeReasonDd,
+  setScanSubSort,
+  toggleFilterDd, setScanSubRevenue, closeFilterDd,
+  togglePartnerDd, setScanSubPartner, closePartnerDd,
+  toggleReasonDd, setScanSubReason, closeReasonDd,
   // Email attachments (drop zone on outbound/approval cards)
   handleAttachDrop, handleAttachSelect, removeAttachment,
   // Inbound filters
@@ -5597,6 +5819,7 @@ Object.assign(window, {
   toggleHiddenSenders, addHiddenSender, removeHiddenSender, closeHiddenSenders,
   // Outbound actions
   toggleItem, approve, showEdit, hideEdit, resummarize, reject, saveEdit, saveExocadLink,
+  composeOutreachForCase,
   // Inbound actions
   classifyReply, manuallyLinkReply, escalateForCall, markReplyNoCase,
   // Reschedule filters / actions

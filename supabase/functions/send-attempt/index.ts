@@ -287,8 +287,12 @@ serve(async (req) => {
     const { data: q } = await sb.from("dr_outreach_queue").select("case_number, reason").eq("id", claimed.queue_id).single();
     let autoAttachments: GraphAttachment[] | null = null;
     if (q?.reason === "scan_submission_ack") {
-      const jobAid = await getJobAidAttachment();
-      if (jobAid) autoAttachments = [jobAid];
+      // The Aspen Labs job-aid PDF only belongs on @aspendental.com acks (the templated
+      // ones). Non-Aspen scan submissions are coordinator-written and carry no job aid.
+      if (/@aspendental\.com\s*$/i.test(claimed.to_email || "")) {
+        const jobAid = await getJobAidAttachment();
+        if (jobAid) autoAttachments = [jobAid];
+      }
     } else if (q?.case_number) {
       const rx = await getRxAttachment(q.case_number);
       if (rx) autoAttachments = [rx];

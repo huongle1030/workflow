@@ -359,12 +359,15 @@ serve(async (_req) => {
     for (const a of approvedAttempts ?? []) {
       try {
         const { data: q } = await sb.from("dr_outreach_queue").select("case_number, reason").eq("id", a.queue_id).single();
-        // Scan-submission acks are case-less and carry the Aspen Labs job-aid PDF instead
-        // of an RX attachment; everything else gets the case RX attachment (if any).
+        // Scan-submission acks are case-less; @aspendental.com acks carry the Aspen Labs
+        // job-aid PDF instead of an RX attachment. Non-Aspen scan submissions are
+        // coordinator-written and carry no auto attachment. Everything else gets the RX.
         let autoAttachments: GraphAttachment[] | null = null;
         if (q?.reason === "scan_submission_ack") {
-          const jobAid = await getJobAidAttachment();
-          if (jobAid) autoAttachments = [jobAid];
+          if (/@aspendental\.com\s*$/i.test(a.to_email || "")) {
+            const jobAid = await getJobAidAttachment();
+            if (jobAid) autoAttachments = [jobAid];
+          }
         } else if (q?.case_number) {
           const rxAttachment = await getRxAttachment(q.case_number);
           if (rxAttachment) autoAttachments = [rxAttachment];
