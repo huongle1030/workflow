@@ -50,9 +50,71 @@ const REASON_LABEL = {
   design_modification: 'Design Modification',
   missing_info: 'Missing Info',
   waiting_on_parts: 'Waiting on Parts',
+  late_approval_notice: 'Late Approval Notice',
   reschedule_check: 'Reschedule Check',
   scan_submission_ack: 'Scan Submission',
 };
+
+// Pending Outbound: the 7 outreach_reason values paired with the per-reason attempt-count column
+// surfaced by v_fullarch_wip_outbound (from case_parse_state). Used for the expanded breakdown and
+// the collapsed right-hand stamp.
+const OUTBOUND_REASON_COUNT_FIELDS = [
+  ['design_approval',      'design_approval_attempt_count'],
+  ['design_modification',  'design_modification_count'],
+  ['missing_info',         'missing_info_count'],
+  ['waiting_on_parts',     'waiting_on_parts_count'],
+  ['late_approval_notice', 'late_approval_notice_count'],
+  ['reschedule_check',     'reschedule_check_count'],
+  ['scan_submission_ack',  'scan_submission_ack_count'],
+];
+
+// A case row came from v_fullarch_wip_outbound (carries Sonnet parse fields) vs the scan-sub triage
+// view (does not). Guards the parse-driven UI so scan-ack cards are unaffected.
+function hasParseFields(r) { return r && r.parsed !== undefined; }
+
+// Sent design-approval attempt N -> the template attempt the next follow-up uses.
+// 1..3 stay; the 4th is the escalation template (4); the 5th+ is the phone-call template (99).
+function nextDesignApprovalAttempt(sentN) {
+  const next = Number(sentN || 0) + 1;
+  if (next <= 3) return next;
+  if (next === 4) return 4;
+  return 99;
+}
+
+// "Call for now": once the next design-approval follow-up would be the escalation (4) or the phone
+// call (99), the card is time-sensitive — a phone call beats another email.
+function outboundCallForNow(r) {
+  if (!hasParseFields(r)) return false;
+  const openReason = r.most_recent_unapproved_reason || 'design_approval';
+  if (openReason !== 'design_approval') return false;
+  const next = nextDesignApprovalAttempt(r.design_approval_attempt_count);
+  return next === 4 || next === 99;
+}
+
+// Collapsed right-hand stamp: the design-approval attempt # when the case is in an active
+// design-approval conversation, otherwise the most-recent-unapproved reason label.
+function outboundStampHtml(r) {
+  if (!hasParseFields(r)) return '';
+  const openReason = r.most_recent_unapproved_reason || 'design_approval';
+  if (openReason === 'design_approval') {
+    const n = Number(r.design_approval_attempt_count || 0);
+    const cls = 'attempt-' + Math.min(Math.max(n, 1), 4);
+    return '<div class="stamp ' + cls + '">Design Approval · Attempt ' + n + '</div>';
+  }
+  return '<div class="stamp reason-stamp">' + esc(REASON_LABEL[openReason] || openReason) + '</div>';
+}
+
+// Expanded breakdown: all 7 reasons' attempt #s for the case. The open reason is highlighted.
+function outboundReasonBreakdown(r) {
+  if (!hasParseFields(r)) return '';
+  const open = r.most_recent_unapproved_reason || '';
+  const items = OUTBOUND_REASON_COUNT_FIELDS.map(([reason, field]) => {
+    const n = Number(r[field] || 0);
+    const cls = 'reason-attempt' + (reason === open ? ' open' : '') + (n > 0 ? ' nonzero' : '');
+    return '<span class="' + cls + '">' + esc(REASON_LABEL[reason] || reason) + ' <strong>' + n + '</strong></span>';
+  }).join('');
+  return '<div class="reason-breakdown"><div class="reason-breakdown-label">Follow-up attempts by reason</div>' + items + '</div>';
+}
 
 // Strategic partners temporarily hidden from the UI (we're not working these yet). Rows for
 // these partners are filtered out of every email tab (Pending Outbound / Approval / Replies)
@@ -1590,7 +1652,8 @@ async function removeAttachment(attachmentId, attemptId) {
 }
 
 function renderOutboundCard(r) {
-    const reasonChip = '<span class="reason-chip ' + r.reason + '">' + (REASON_LABEL[r.reason] || r.reason) + '</span>';
+    // Due date for the collapsed meta (parse-driven cards show due date, not "Proposed").
+    const dueStr = r.doctor_due_date_only ? fmtDayOnly(r.doctor_due_date_only) : '';
     // Revenue chip: high $5k+, mid $2k-$5k, neutral under $2k. Hide if $0.
     const rev = Number(r.case_revenue || 0);
     const revClass = rev >= 5000 ? 'high' : rev >= 2000 ? 'mid' : '';
@@ -1638,17 +1701,14 @@ function renderOutboundCard(r) {
     // Exocad link presence — gate sends if missing
     const hasExocadLink = !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
     const linkOk = hasExocadLink || isScanAck;
-    const noLinkChip = linkOk
-      ? ''
-      : '<span class="activity-chip nolink">⚠ No exocad link yet</span>';
-    // Triage chip — shown on Pending Approval cards that actually have a logged communication.
-    // (As of 20260605_01 the bucket no longer requires >1 comm — Approval = every non-scan-ack
-    // case — so gate the "in conversation" label on real comm evidence to avoid mislabeling
-    // cases with no contact yet.)
-    let triageChip = '';
-    if (r.triage_bucket === 'pending_approval' && r.most_recent_comm_at) {
-      triageChip = '<span class="triage-chip confirmed" title="At least one communication logged on this case">✓ in conversation</span>';
-    }
+    // No exocad link -> red asterisk to the LEFT of the Pan Number (real cases only; scan-acks never
+    // carry a link by design). Replaces the old "⚠ No exocad link yet" tag.
+    const noLinkAsterisk = (!isScanAck && !hasExocadLink)
+      ? '<span class="nolink-asterisk" title="No exocad viewer link on file yet">*</span>' : '';
+    // Time-sensitive flag: once the next design-approval follow-up is the escalation (4) or phone
+    // call (99), surface "Call for now" so the coordinator picks up the phone instead of emailing.
+    const callForNowChip = outboundCallForNow(r)
+      ? '<span class="callnow-chip" title="Next step should be a phone call, not another email">📞 Call for now</span>' : '';
     // Most recent communication on the case — any medium (email / phone / note),
     // regardless of age — shown with its full details (the same content the Case
     // Lookup timeline shows). Rendered as a lighter-yellow sub-card to the left
@@ -1701,26 +1761,28 @@ function renderOutboundCard(r) {
       <div class="item-head" onclick="toggleItem('${r.attempt_id}')">
         <div>
           <span class="case-id-block">
-            <span class="pan">${esc(isScanAck ? '📩' : (r.pan_number || '-'))}</span>
+            ${noLinkAsterisk}<span class="pan">${esc(isScanAck ? '📩' : (r.pan_number || '-'))}</span>
             <span class="case-sub">${isScanAck ? 'New scan submission' : 'Case ' + esc(r.case_number)}</span>
           </span>
           ${revenueChip}
           ${partnerChip}
-          ${triageChip}
+          ${callForNowChip}
           ${activityChip}
           ${missChip}
-          ${noLinkChip}
           <div class="who">${who} → <strong>${esc(r.to_email)}</strong></div>
           <div class="subject">${esc(r.subject)}</div>
         </div>
         <div class="meta">
-          ${isScanAck ? '' : `<div class="stamp attempt-${r.attempt_number}">Attempt ${r.attempt_number}</div>`}
-          <div>${isScanAck ? 'Received' : 'Proposed'} ${fmtDate(r.proposed_at)}</div>
+          ${hasParseFields(r) ? outboundStampHtml(r)
+            : (isScanAck ? '' : `<div class="stamp attempt-${r.attempt_number}">Attempt ${r.attempt_number}</div>`)}
+          ${hasParseFields(r)
+            ? (dueStr ? '<div>Due ' + dueStr + '</div>' : '')
+            : `<div>${isScanAck ? 'Received' : 'Proposed'} ${fmtDate(r.proposed_at)}</div>`}
           ${r.patient_name ? '<div>' + esc(r.patient_name) + '</div>' : ''}
-          ${isScanAck ? '' : `<div class="meta-reason">${reasonChip}</div>`}
         </div>
       </div>
       <div class="item-body">
+        ${outboundReasonBreakdown(r)}
         <div class="outbound-detail-row ${hasSide ? '' : 'no-prefs'}">
           <div class="preview">
             <div class="preview-subject">${esc(r.subject)}</div>
@@ -1801,6 +1863,195 @@ function renderOutboundCard(r) {
     </div>`;
 }
 
+// ---------- Pending Outbound toolbar: revenue sort + 4-bucket customer-type filter ----------
+// Revenue sort: highest->lowest, lowest->highest, or "" = All revenue (no sort, default browse
+// order). Gated by OUTBOUND_REVENUE like the existing revenue tiers. Customer filter maps
+// "Accounts"."Strategic Partner" (surfaced as strategic_partner) into 4 buckets.
+const pendingOutFilter = { sort: '', customer: '', hold: '', link: '' };  // link: '' | 'has' | 'none'
+
+// A case has a usable exocad viewer link (drives the red asterisk on the card + the "No exocad
+// link" toggle filter).
+function outboundHasExocadLink(r) {
+  return !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
+}
+
+// Sentinel value for the "no hold reason on file" bucket (cases whose bottom line shows only the
+// Current Step). Real hold reasons are matched by their exact text.
+const HOLD_NONE_VALUE = '__none__';
+
+// The 4 customer-type buckets. "New Customer" folds New Customer - 2023..2026 into one.
+const OUTBOUND_CUSTOMER_BUCKETS = [
+  { value: 'aspen_clearchoice', label: 'Aspen ClearChoice', match: (sp) => sp === 'Aspen ClearChoice' },
+  { value: 'aspen_dental',      label: 'Aspen Dental',      match: (sp) => sp === 'Aspen Dental' },
+  { value: 'legacy',            label: 'Legacy',            match: (sp) => sp === 'Legacy' },
+  { value: 'new_customer',      label: 'New Customer',      match: (sp) => /^new customer/i.test(sp || '') },
+];
+function outboundCustomerMatch(value, sp) {
+  const b = OUTBOUND_CUSTOMER_BUCKETS.find(x => x.value === value);
+  return b ? b.match(sp) : true;
+}
+
+function setApprovalSort(value) { pendingOutFilter.sort = value || ''; renderPendingOut(); }
+function setApprovalCustomer(value) {
+  pendingOutFilter.customer = value || '';
+  const dd = document.getElementById('approval-customer-dd');
+  if (dd) dd.classList.toggle('has-value', !!pendingOutFilter.customer);
+  closeApprovalCustomerDd();
+  renderPendingOut();
+}
+function toggleApprovalCustomerDd(ev) {
+  if (ev) ev.stopPropagation();
+  document.getElementById('approval-customer-dd')?.classList.toggle('open');
+}
+function closeApprovalCustomerDd() {
+  document.getElementById('approval-customer-dd')?.classList.remove('open');
+}
+
+// Hold-reason filter (the "Hold Reason" half of each card's bottom Current Step · Hold Reason line,
+// from "Cases"."Hold Reason"). Options are built dynamically from the values present in the tab.
+function setApprovalHold(value) {
+  pendingOutFilter.hold = value || '';
+  const dd = document.getElementById('approval-hold-dd');
+  if (dd) dd.classList.toggle('has-value', !!pendingOutFilter.hold);
+  closeApprovalHoldDd();
+  renderPendingOut();
+}
+function toggleApprovalHoldDd(ev) {
+  if (ev) ev.stopPropagation();
+  document.getElementById('approval-hold-dd')?.classList.toggle('open');
+}
+function closeApprovalHoldDd() {
+  document.getElementById('approval-hold-dd')?.classList.remove('open');
+}
+function approvalHoldMatch(value, holdReason) {
+  if (value === HOLD_NONE_VALUE) return !holdReason;
+  return (holdReason || '') === value;
+}
+function populateApprovalHoldDropdown() {
+  const rows = state.pendingOut || [];
+  const labelEl = document.getElementById('approval-hold-label');
+  const countEl = document.getElementById('approval-hold-count');
+  const menuEl  = document.getElementById('approval-hold-menu');
+  if (!labelEl || !countEl || !menuEl) return;
+  // Tally each distinct hold reason (plus a "no hold reason" bucket) against the unfiltered set.
+  const counts = { '': rows.length };
+  let noneCount = 0;
+  for (const r of rows) {
+    const h = r.hold_reason;
+    if (!h) { noneCount++; continue; }
+    counts[h] = (counts[h] || 0) + 1;
+  }
+  if (noneCount) counts[HOLD_NONE_VALUE] = noneCount;
+  const reasons = Object.keys(counts)
+    .filter(k => k !== '' && k !== HOLD_NONE_VALUE)
+    .sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  const current = pendingOutFilter.hold || '';
+  const labelFor = (v) => v === '' ? 'All hold reasons' : (v === HOLD_NONE_VALUE ? 'No hold reason' : v);
+  labelEl.textContent = labelFor(current);
+  const btnCount = counts[current] ?? rows.length;
+  countEl.textContent = btnCount;
+  countEl.classList.toggle('zero', btnCount === 0);
+  const items = [{ value: '', label: 'All hold reasons' }]
+    .concat(reasons.map(k => ({ value: k, label: k })));
+  if (noneCount) items.push({ value: HOLD_NONE_VALUE, label: 'No hold reason' });
+  menuEl.innerHTML = items.map(o => {
+    const c = counts[o.value] ?? 0;
+    const sel = o.value === current ? ' selected' : '';
+    const zero = c === 0 ? ' zero' : '';
+    const safeValue = (o.value || '').replace(/'/g, "\\'");
+    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setApprovalHold('${safeValue}')">
+      <span>${esc(o.label)}</span>
+      <span class="chip-count${zero}">${c}</span>
+    </div>`;
+  }).join('');
+}
+
+// Build the customer dropdown menu with live counts for each bucket (against the unfiltered set).
+function populateApprovalCustomerDropdown() {
+  const rows = state.pendingOut || [];
+  const labelEl = document.getElementById('approval-customer-label');
+  const countEl = document.getElementById('approval-customer-count');
+  const menuEl  = document.getElementById('approval-customer-menu');
+  if (!labelEl || !countEl || !menuEl) return;
+  const counts = { '': rows.length };
+  for (const b of OUTBOUND_CUSTOMER_BUCKETS) counts[b.value] = rows.filter(r => b.match(r.strategic_partner)).length;
+  const current = pendingOutFilter.customer || '';
+  const labelFor = (v) => v ? (OUTBOUND_CUSTOMER_BUCKETS.find(b => b.value === v)?.label || v) : 'All customers';
+  labelEl.textContent = labelFor(current);
+  const btnCount = counts[current] ?? rows.length;
+  countEl.textContent = btnCount;
+  countEl.classList.toggle('zero', btnCount === 0);
+  const items = [{ value: '', label: 'All customers' }].concat(OUTBOUND_CUSTOMER_BUCKETS);
+  menuEl.innerHTML = items.map(o => {
+    const c = counts[o.value] ?? 0;
+    const sel = o.value === current ? ' selected' : '';
+    const zero = c === 0 ? ' zero' : '';
+    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setApprovalCustomer('${esc(o.value)}')">
+      <span>${esc(o.label)}</span>
+      <span class="chip-count${zero}">${c}</span>
+    </div>`;
+  }).join('');
+}
+
+// Exocad-link filter: All ('') / Has link ('has') / No link ('none', the red-asterisk cases).
+function setApprovalLink(value) {
+  pendingOutFilter.link = value || '';
+  const dd = document.getElementById('approval-link-dd');
+  if (dd) dd.classList.toggle('has-value', !!pendingOutFilter.link);
+  closeApprovalLinkDd();
+  renderPendingOut();
+}
+function toggleApprovalLinkDd(ev) {
+  if (ev) ev.stopPropagation();
+  document.getElementById('approval-link-dd')?.classList.toggle('open');
+}
+function closeApprovalLinkDd() {
+  document.getElementById('approval-link-dd')?.classList.remove('open');
+}
+function approvalLinkMatch(value, r) {
+  if (value === 'has') return outboundHasExocadLink(r);
+  if (value === 'none') return !outboundHasExocadLink(r);
+  return true;
+}
+function populateApprovalLinkDropdown() {
+  const rows = state.pendingOut || [];
+  const labelEl = document.getElementById('approval-link-label');
+  const countEl = document.getElementById('approval-link-count');
+  const menuEl  = document.getElementById('approval-link-menu');
+  if (!labelEl || !countEl || !menuEl) return;
+  const has = rows.filter(outboundHasExocadLink).length;
+  const counts = { '': rows.length, has, none: rows.length - has };
+  const items = [
+    { value: '',     label: 'All links' },
+    { value: 'has',  label: 'Has exocad link' },
+    { value: 'none', label: 'No exocad link' },
+  ];
+  const current = pendingOutFilter.link || '';
+  labelEl.textContent = items.find(o => o.value === current)?.label || 'All links';
+  const btnCount = counts[current] ?? rows.length;
+  countEl.textContent = btnCount;
+  countEl.classList.toggle('zero', btnCount === 0);
+  menuEl.innerHTML = items.map(o => {
+    const c = counts[o.value] ?? 0;
+    const sel = o.value === current ? ' selected' : '';
+    const zero = c === 0 ? ' zero' : '';
+    const isNone = o.value === 'none';
+    return `<div class="custom-dd-option${sel}" role="option" data-value="${esc(o.value)}" onclick="setApprovalLink('${esc(o.value)}')">
+      <span>${isNone ? '<span class="nolink-asterisk">*</span> ' : ''}${esc(o.label)}</span>
+      <span class="chip-count${zero}">${c}</span>
+    </div>`;
+  }).join('');
+}
+
+// Show/hide the revenue-sort control per the OUTBOUND_REVENUE capability, and keep the <select>
+// in sync with state. Called from renderPendingOut (employee is loaded by then).
+function syncApprovalToolbarVisibility() {
+  const revWrap = document.getElementById('approval-revenue-wrap');
+  if (revWrap) revWrap.style.display = can(CAPABILITIES.OUTBOUND_REVENUE) ? '' : 'none';
+  const sel = document.getElementById('approval-sort');
+  if (sel && sel.value !== pendingOutFilter.sort) sel.value = pendingOutFilter.sort;
+}
+
 // "Pending Outbound" sub-tab (state.pendingOut): the Full-Arch WIP worklist from
 // v_fullarch_wip_outbound — one card per Full-Arch case with Case Status = 'WIP', whether or not
 // any email exists. Cases with a pending draft (attempt_id) reuse the outbound card (Approve/Edit/
@@ -1809,6 +2060,10 @@ function renderPendingOut() {
   const root = document.getElementById('list-approval');
   if (!root) return;
   const countEl = document.getElementById('approval-count');
+  syncApprovalToolbarVisibility();
+  populateApprovalCustomerDropdown();
+  populateApprovalHoldDropdown();
+  populateApprovalLinkDropdown();
   const all = state.pendingOut || [];
   if (!all.length) {
     root.innerHTML = '<div class="empty"><strong>No Full Arch cases in progress.</strong><br/>Every Full Arch case with status WIP shows here — a card appears whether or not any email has been drafted yet.</div>';
@@ -1816,21 +2071,38 @@ function renderPendingOut() {
     return;
   }
   const q = (globalSearch.value || '').trim().toLowerCase();
-  let rows = q
-    ? all.filter(r => [r.case_number, r.pan_number, r.dr_last_name, r.practice_name, r.to_email, r.subject]
-        .some(v => String(v || '').toLowerCase().includes(q)))
-    : all.slice();
-  // Cases needing attention first: existing drafts on top, then most recent communication,
-  // then everything else by case number (stable) so the long no-draft worklist is browsable.
-  rows.sort((a, b) => {
-    const ad = a.attempt_id ? 1 : 0, bd = b.attempt_id ? 1 : 0;
-    if (ad !== bd) return bd - ad;
-    const at = new Date(a.evidence_at || 0), bt = new Date(b.evidence_at || 0);
-    if (+at !== +bt) return bt - at;
-    return String(a.case_number || '').localeCompare(String(b.case_number || ''));
-  });
+  let rows = all.slice();
+  // Customer-type filter (4 buckets from strategic_partner).
+  if (pendingOutFilter.customer) rows = rows.filter(r => outboundCustomerMatch(pendingOutFilter.customer, r.strategic_partner));
+  // Hold-reason filter (from "Cases"."Hold Reason").
+  if (pendingOutFilter.hold) rows = rows.filter(r => approvalHoldMatch(pendingOutFilter.hold, r.hold_reason));
+  // Exocad-link filter (All / Has link / No link).
+  if (pendingOutFilter.link) rows = rows.filter(r => approvalLinkMatch(pendingOutFilter.link, r));
+  // Global text search.
+  if (q) rows = rows.filter(r => [r.case_number, r.pan_number, r.dr_last_name, r.practice_name, r.to_email, r.subject]
+        .some(v => String(v || '').toLowerCase().includes(q)));
+  // Revenue sort (gated). When the user lacks OUTBOUND_REVENUE, ignore any sort value.
+  const sort = can(CAPABILITIES.OUTBOUND_REVENUE) ? pendingOutFilter.sort : '';
+  if (sort === 'revenue_desc') {
+    rows.sort((a, b) => Number(b.case_revenue || 0) - Number(a.case_revenue || 0));
+  } else if (sort === 'revenue_asc') {
+    rows.sort((a, b) => Number(a.case_revenue || 0) - Number(b.case_revenue || 0));
+  } else {
+    // "All revenue" / no sort = default browse order: drafts first, then most recent comm, then case #.
+    rows.sort((a, b) => {
+      const ad = a.attempt_id ? 1 : 0, bd = b.attempt_id ? 1 : 0;
+      if (ad !== bd) return bd - ad;
+      const at = new Date(a.evidence_at || 0), bt = new Date(b.evidence_at || 0);
+      if (+at !== +bt) return bt - at;
+      return String(a.case_number || '').localeCompare(String(b.case_number || ''));
+    });
+  }
   if (countEl) {
-    countEl.textContent = q ? `Showing ${rows.length} of ${all.length}` : `${all.length} total`;
+    countEl.textContent = (rows.length !== all.length) ? `Showing ${rows.length} of ${all.length}` : `${all.length} total`;
+  }
+  if (!rows.length) {
+    root.innerHTML = '<div class="empty"><strong>No cases match your filters.</strong><br/>Clear the customer filter or search to see all.</div>';
+    return;
   }
   // Draft cards reuse the outbound card (Approve/Edit/Reject). No-draft Full-Arch WIP cases
   // render a read-only card with Lookup + "Draft outreach email".
@@ -1860,9 +2132,12 @@ function renderFullArchWipCard(r) {
   else if (/heartland|mb2|western|legacy/i.test(sp)) spClass = 'other';
   const partnerChip = sp ? '<span class="partner-chip ' + spClass + '">' + esc(sp) + '</span>' : '';
   const who = esc(r.dr_pref || 'Dr.') + ' ' + esc(r.dr_last_name || '') + ' · ' + esc(r.practice_name || '');
-  const triageChip = r.most_recent_comm_at
-    ? '<span class="triage-chip confirmed" title="At least one communication logged on this case">✓ in conversation</span>'
-    : '<span class="triage-chip" title="No communication logged on this case yet">No contact yet</span>';
+  // No exocad link -> red asterisk left of the Pan Number (replaces the old no-link tag).
+  const hasExocadLink = !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
+  const noLinkAsterisk = !hasExocadLink
+    ? '<span class="nolink-asterisk" title="No exocad viewer link on file yet">*</span>' : '';
+  const callForNowChip = outboundCallForNow(r)
+    ? '<span class="callnow-chip" title="Next step should be a phone call, not another email">📞 Call for now</span>' : '';
   const missChip = r.will_miss_due_date
     ? '<span class="activity-chip miss">⚠ Will miss due date · ' + r.days_late_if_approved_now + 'd late</span>'
     : '';
@@ -1887,30 +2162,30 @@ function renderFullArchWipCard(r) {
       </div>` : '';
   const showPrefs = !!(r.account_preferences || r.prefs_summary_headline);
   const hasSide = !!(showPrefs || hasNote);
-  const dueStr = r.doctor_due_date_only ? fmtDate(r.doctor_due_date_only) : '';
+  const dueStr = r.doctor_due_date_only ? fmtDayOnly(r.doctor_due_date_only) : '';
   return `
     <div class="item reason-${r.reason} no-draft" data-id="${cardId}">
       <div class="item-head" onclick="toggleItem('${cardId}')">
         <div>
           <span class="case-id-block">
-            <span class="pan">${esc(r.pan_number || '-')}</span>
+            ${noLinkAsterisk}<span class="pan">${esc(r.pan_number || '-')}</span>
             <span class="case-sub">Case ${esc(r.case_number)}</span>
           </span>
           ${revenueChip}
           ${partnerChip}
-          ${triageChip}
+          ${callForNowChip}
           ${missChip}
-          <span class="activity-chip nolink">No outreach drafted yet</span>
           <div class="who">${who}</div>
           <div class="subject">${esc(r.current_step || 'Full Arch — WIP')}${r.hold_reason ? ' · ' + esc(r.hold_reason) : ''}</div>
         </div>
         <div class="meta">
-          <div class="stamp">WIP</div>
+          ${hasParseFields(r) ? outboundStampHtml(r) : '<div class="stamp">WIP</div>'}
           ${dueStr ? '<div>Due ' + dueStr + '</div>' : ''}
           ${r.patient_name ? '<div>' + esc(r.patient_name) + '</div>' : ''}
         </div>
       </div>
       <div class="item-body">
+        ${outboundReasonBreakdown(r)}
         <div class="outbound-detail-row ${hasSide ? '' : 'no-prefs'}">
           <div class="preview">
             <div class="empty" style="padding:12px 4px;">
@@ -3005,6 +3280,12 @@ document.addEventListener('click', (e) => {
   if (partnerDd && !partnerDd.contains(e.target)) partnerDd.classList.remove('open');
   const reasonDd = document.getElementById('outbound-reason-dd');
   if (reasonDd && !reasonDd.contains(e.target)) reasonDd.classList.remove('open');
+  const apprCustDd = document.getElementById('approval-customer-dd');
+  if (apprCustDd && !apprCustDd.contains(e.target)) apprCustDd.classList.remove('open');
+  const apprHoldDd = document.getElementById('approval-hold-dd');
+  if (apprHoldDd && !apprHoldDd.contains(e.target)) apprHoldDd.classList.remove('open');
+  const apprLinkDd = document.getElementById('approval-link-dd');
+  if (apprLinkDd && !apprLinkDd.contains(e.target)) apprLinkDd.classList.remove('open');
   const inboundStatusDd = document.getElementById('inbound-status-dd');
   if (inboundStatusDd && !inboundStatusDd.contains(e.target)) inboundStatusDd.classList.remove('open');
   const inboundCaseDd = document.getElementById('inbound-case-dd');
@@ -4141,19 +4422,20 @@ function renderDashboard() {
   const today = pacificDate(), yesterday = pacificDate(-1);
   const targetDate = caseTab === 'today' ? today : yesterday;
 
-  // "Today" = the action's log_date (the business date the coordinator
-  // assigned). log_date is a plain date column, so this is timezone-proof.
-  // Avoid created_date here: it's a UTC timestamp and comparing its UTC date
-  // against a Pacific "today" miscounts rows created in the evening Pacific.
-  const todayLogs = filtered.filter(l => l.log_date === today);
+  // "Approved" = how many distinct cases were doctor-approved within the selected date range
+  // (and coordinator). getFilteredLogs() already applies the From/To range + coordinator filter,
+  // so we just count distinct case_id among the 'Dr Approved' actions in that filtered set.
+  const approvedCaseIds = new Set(
+    filtered.filter(l => l.action_type === 'Dr Approved').map(l => l.case_id).filter(Boolean)
+  );
 
   const actionCounts = {};
   filtered.forEach(l => { actionCounts[l.action_type] = (actionCounts[l.action_type] || 0) + 1; });
   const topAction = Object.entries(actionCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || '-';
 
-  document.getElementById('cc-stat-total').textContent  = filtered.length;
-  document.getElementById('cc-stat-today').textContent  = todayLogs.length;
-  document.getElementById('cc-stat-top').textContent    = topAction;
+  document.getElementById('cc-stat-total').textContent    = filtered.length;
+  document.getElementById('cc-stat-approved').textContent = approvedCaseIds.size;
+  document.getElementById('cc-stat-top').textContent      = topAction;
 
   document.getElementById('cc-tab-today').classList.toggle('cc-pill-active', caseTab === 'today');
   document.getElementById('cc-tab-yesterday').classList.toggle('cc-pill-active', caseTab === 'yesterday');
@@ -5810,6 +6092,10 @@ Object.assign(window, {
   toggleFilterDd, setScanSubRevenue, closeFilterDd,
   togglePartnerDd, setScanSubPartner, closePartnerDd,
   toggleReasonDd, setScanSubReason, closeReasonDd,
+  // Pending Outbound (approval) toolbar: revenue sort + customer-type filter + hold-reason filter
+  setApprovalSort, setApprovalCustomer, toggleApprovalCustomerDd, closeApprovalCustomerDd,
+  setApprovalHold, toggleApprovalHoldDd, closeApprovalHoldDd,
+  setApprovalLink, toggleApprovalLinkDd, closeApprovalLinkDd,
   // Email attachments (drop zone on outbound/approval cards)
   handleAttachDrop, handleAttachSelect, removeAttachment,
   // Inbound filters

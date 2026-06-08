@@ -31,9 +31,11 @@ export const ROLES = {
   // CaseFlow production-only roles (no Design Approvals / Case Coordination).
   DESIGNER:          'designer',
   SCANNING:          'scanning',
-  // QC mode-only role. Sees ONLY the Quality Control mode — no outreach, no
-  // case coordination, no other CaseFlow modes.
+  // QC mode-only role. Sees ONLY the Quality Control mode's "Log QC Reject" tab —
+  // no outreach, no case coordination, no other CaseFlow modes, no Internal Remake.
   QC_TECH:           'qc_tech',
+  // Department Lead — QC mode-only role that sees ONLY the "Internal Remake" tab.
+  DEPT_LEAD:         'dept_lead',
   // Case Lookup-only role. Holds NO capabilities, so every gated mode is hidden;
   // the only mode it can reach is the ungated Case Lookup (see ROLE_CAPABILITIES).
   NINJA:             'ninja',
@@ -53,6 +55,7 @@ export const ROLE_LABELS = {
   [ROLES.DESIGNER]:          'Designer',
   [ROLES.SCANNING]:          'Scanning',
   [ROLES.QC_TECH]:           'QC Tech',
+  [ROLES.DEPT_LEAD]:         'Department Lead',
   [ROLES.NINJA]:             'Ninja',
 };
 
@@ -88,9 +91,14 @@ export const CAPABILITIES = {
   CASEFLOW_REVIEW:  'caseflow.review',
   CASEFLOW_SCAN:    'caseflow.scan',
   CASEFLOW_DESIGN:  'caseflow.design',
-  // Quality Control mode (Log QC Reject + Internal Remake). Gated to qc_tech
-  // plus the full-access roles (via ALL_CAPS).
+  // Quality Control mode (Log QC Reject + Internal Remake). Gated to qc_tech,
+  // dept_lead, plus the full-access roles (via ALL_CAPS).
   CASEFLOW_QC:      'caseflow.qc',
+  // The two Quality Control sub-tabs, gated independently:
+  //   QC_REJECT -> "Log QC Reject" tab  (qc_tech + full-access)
+  //   QC_REMAKE -> "Internal Remake" tab (dept_lead + full-access)
+  CASEFLOW_QC_REJECT: 'caseflow.qc.reject',
+  CASEFLOW_QC_REMAKE: 'caseflow.qc.remake',
 };
 
 const C = CAPABILITIES;
@@ -139,9 +147,11 @@ const CASE_REVIEW_CAPS = [...DATA_ENTRY_CAPS, C.CASEFLOW_REVIEW, C.CASEFLOW_SCAN
 // Coordination apps are hidden from the brand switcher and unreachable.
 const DESIGNER_CAPS    = [C.CASEFLOW_DESIGN, C.CASEFLOW_SCAN];
 const SCANNING_CAPS    = [C.CASEFLOW_SCAN];
-// QC Tech sees ONLY the Quality Control mode. The full-access roles also get
-// CASEFLOW_QC automatically via ALL_CAPS (Object.values(CAPABILITIES)).
-const QC_TECH_CAPS     = [C.CASEFLOW_QC];
+// QC Tech sees ONLY the Quality Control mode's "Log QC Reject" tab. dept_lead sees ONLY the
+// "Internal Remake" tab. The full-access roles get CASEFLOW_QC + both sub-caps automatically via
+// ALL_CAPS (Object.values(CAPABILITIES)), so they keep seeing both tabs.
+const QC_TECH_CAPS     = [C.CASEFLOW_QC, C.CASEFLOW_QC_REJECT];
+const DEPT_LEAD_CAPS   = [C.CASEFLOW_QC, C.CASEFLOW_QC_REMAKE];
 // Ninja sees ONLY Case Lookup. Lookup is ungated (no cap / no MODE_CAP entry), so
 // an empty cap set hides every other mode while firstPermittedMode() falls through
 // to 'lookup'. Do NOT add caps here or other modes will become visible.
@@ -170,6 +180,7 @@ export const ROLE_CAPABILITIES = {
   [ROLES.DESIGNER]:        new Set(DESIGNER_CAPS),
   [ROLES.SCANNING]:        new Set(SCANNING_CAPS),
   [ROLES.QC_TECH]:         new Set(QC_TECH_CAPS),
+  [ROLES.DEPT_LEAD]:       new Set(DEPT_LEAD_CAPS),
   // Case Lookup-only role — empty cap set; only the ungated Case Lookup is reachable.
   [ROLES.NINJA]:           new Set(NINJA_CAPS),
 };

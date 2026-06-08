@@ -95,8 +95,16 @@ export async function createMrbEntry(f) {
     team: f.department,
     defect_description: f.description,
     logged_by: f.logged_by,
+    // Internal Remake additions: technician who worked on the product, the step the issue occurred
+    // on, and the case facts auto-populated from qc_case_lookup.
+    technician: f.technician || null,
+    issue_step: f.issue_step || null,
     ship_date: f.ship_date,
     dr_due_date: f.dr_due_date,
+    received_date: f.received_date || null,
+    start_date: f.start_date || null,
+    time_in_lab_days: (f.time_in_lab_days ?? null),
+    total_invoice: (f.total_invoice ?? null),
     needs_expert: f.needs_expert,
     status: 'Open',
     disposition: 'Pending',
@@ -107,6 +115,18 @@ export async function createMrbEntry(f) {
     headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
     body: JSON.stringify([body]),
   });
+}
+
+// One-call case lookup for the Internal Remake form (auto-populate + the step dropdown).
+// Returns the qc_case_lookup JSON ({ found, ship_date, dr_due_date, received_date, start_date,
+// time_in_lab_days, total_invoice, steps:[...] }) or { found:false } when the case isn't on file.
+export async function lookupCaseForRemake(caseNumber) {
+  const res = await rest('/rest/v1/rpc/qc_case_lookup', {
+    method: 'POST',
+    headers: headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ p_case_number: caseNumber }),
+  });
+  return res || { found: false };
 }
 
 // Latest internal-remake rows for the dashboard. Reads mrb_cases (source=internal)

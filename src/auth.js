@@ -28,8 +28,9 @@ export const ROLE_OPTIONS = [
   // CaseFlow production-only roles (no outreach / case coordination).
   { value: 'designer',         label: 'Designer' },
   { value: 'scanning',         label: 'Scanning' },
-  // QC mode-only role.
+  // QC mode-only roles.
   { value: 'qc_tech',          label: 'QC Tech' },
+  { value: 'dept_lead',        label: 'Department Lead' },
   // Case Lookup-only role.
   { value: 'ninja',            label: 'Ninja' },
 ];
