@@ -3063,12 +3063,20 @@ async function saveEdit(id) {
     await loadAll();
   } catch (e) {}
 }
+// Optimistically remove a just-decided reply from the Pending Classification list so the card
+// disappears immediately, instead of waiting for the full loadAll() refresh of every tab.
+function dropInboundReply(replyId) {
+  if (Array.isArray(state.inbound)) state.inbound = state.inbound.filter(r => r.reply_id !== replyId);
+  try { updateInboundBadges(); } catch (e) {}
+  try { renderInbound(); } catch (e) {}
+}
 async function classifyReply(id, decision) {
   if (!confirm('Mark this reply as "' + decision + '"? This will close the case if approved.')) return;
   try {
     await callRpc('confirm_reply', { p_reply_id: id, p_decision: decision, p_coordinator_id: REVIEWER });
     toast('Reply marked as ' + decision, 'ok');
-    await loadAll();
+    dropInboundReply(id);   // card disappears now
+    await loadAll();        // refresh counts + other tabs (incl. Ready for ABS Scan) in the background
   } catch (e) {}
 }
 
@@ -3094,17 +3102,18 @@ async function manuallyLinkReply(replyId, rawCaseNumber) {
   }
 }
 
-// Escalate a time-sensitive reply to the account manager. The doctor's
-// message is forwarded to the AM with case context, and the queue is flagged
-// 'escalated_am' so it drops out of Pending Replies.
+// Escalate a time-sensitive reply to the account manager. Marks the reply handled and flags the
+// queue 'escalated_am' (escalated_to = the AM) so it drops out of Pending Replies. As of 2026-06-08
+// this no longer sends an email — the hand-off is tracked in the queue only.
 async function escalateForCall(replyId) {
-  if (!confirm('Escalate to the account manager for a phone call?\n\nThis will email the AM with the doctor\'s message + case context and mark this reply as handled.')) return;
+  if (!confirm('Escalate to the account manager for a phone call?\n\nThis marks the reply handled and routes it to the AM in the queue. No email is sent.')) return;
   try {
     await callRpc('escalate_reply_for_call', {
       p_reply_id: replyId,
       p_coordinator_id: REVIEWER,
     });
-    toast('Escalated to AM — they\'ll get an email on the next tick', 'ok');
+    toast('Escalated to AM — marked handled (no email sent)', 'ok');
+    dropInboundReply(replyId);
     await loadAll();
   } catch (e) {
     alert('Could not escalate: ' + (e?.message || e));
@@ -3122,6 +3131,7 @@ async function markReplyNoCase(replyId) {
       p_coordinator_id: REVIEWER,
     });
     toast('Triaged — removed from queue', 'ok');
+    dropInboundReply(replyId);
     await loadAll();
   } catch (e) {
     alert('Could not triage: ' + (e?.message || e));

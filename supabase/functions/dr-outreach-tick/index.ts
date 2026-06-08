@@ -1,13 +1,16 @@
 // Supabase Edge Function: dr-outreach-tick
 // Cron-driven worker. On each tick:
-//   0) Send any attempts coordinators have approved (status='queued') via Graph
+//   0) Send any attempts coordinators have APPROVED (status='queued') via Graph. This is the ONLY
+//      place email is sent — and 'queued' is only ever set by approve_attempt / edit_and_approve_attempt
+//      (the coordinator's "Approve & Send" / "Edit Then Send").
 //   1) enqueue_due_outreach() to pick up any newly-eligible cases
 //   2) pick_due_for_send() to grab a batch
 //   3) For each new due row:
 //      a) AUTO-SUMMARIZE: if needs_case_summaries() flags missing RX or
 //         missing-info summaries, call Claude to generate them and stash
 //         in case_rx_summaries / case_missing_info_summaries.
-//      b) Either compose_pending_attempt() (if gate on) or render+send (gate off).
+//      b) compose_pending_attempt() ONLY — i.e. create a draft for coordinator review. The cron
+//         NEVER sends a due row directly (2026-06-08): no email leaves without user approval.
 //
 // Schedule from pg_cron (see README.md): every 15 minutes is a sane default.
 // Required secrets:
@@ -388,42 +391,23 @@ serve(async (_req) => {
     log.enqueued = enq;
     const { data: dueRows, error: dueErr } = await sb.rpc("pick_due_for_send", { p_limit: 50 });
     if (dueErr) throw dueErr;
-    const { data: settingsRows } = await sb.from("dr_outreach_settings").select("reason, requires_approval_before_send");
-    const gateByReason: Record<string, boolean> = {};
-    for (const s of settingsRows ?? []) gateByReason[s.reason] = s.requires_approval_before_send !== false;
+    // HARD GATE (2026-06-08): the cron NEVER sends a due row directly. Every reason composes a
+    // pending_approval draft for coordinator review; outbound email leaves ONLY via Step 0 above,
+    // which sends attempts a coordinator explicitly approved (status 'queued'). This guarantees no
+    // email is sent from any tab without user approval. The previous per-reason auto-send branch
+    // (used when dr_outreach_settings.requires_approval_before_send = false, or — riskier — a reason
+    // had NO settings row, which defaulted to SEND) has been removed.
     for (const r of dueRows ?? []) {
       const attemptNumber = (r.attempt_count ?? 0) + 1;
-      const { data: tmpl, error: tErr } = await sb.from("dr_outreach_templates").select("id, subject, body_html, is_escalation").eq("reason", r.reason).eq("attempt_number", attemptNumber).single();
-      if (tErr) { log.errors.push({ queue_id: r.queue_id, error: `template lookup: ${tErr.message}` }); continue; }
-      const recipient = tmpl.is_escalation ? r.account_manager : r.dr_email;
-      if (!recipient) { log.errors.push({ queue_id: r.queue_id, error: "no recipient" }); continue; }
-      const exocadBlock = r.exocad_viewer_url ? `<p><strong>View the design:</strong> <a href="${r.exocad_viewer_url}">${r.exocad_viewer_url}</a></p>` : "";
-      const rxBullets = `<p><em>Please refer to your original RX submission for the full list of instructions.</em></p>`;
-      const signature = Deno.env.get("OUTREACH_SIGNATURE") ?? `Spectrum Killian<br/><a href="mailto:implants@skdla.com">implants@skdla.com</a>`;
-      const ctx = { dr_pref: r.dr_pref ?? "Dr.", dr_first_name: r.dr_first_name ?? "", dr_last_name: r.dr_last_name ?? (r.practice_name ?? ""), practice_name: r.practice_name ?? "", case_number: r.case_number, patient_name: r.patient_name ?? "your patient", hold_reason: r.hold_reason ?? "", current_step: r.current_step ?? "", doctor_due_date: fmtDate(r.doctor_due_date), account_manager: r.account_manager ?? "your account manager", exocad_link: exocadBlock, rx_bullets: rxBullets, signature: signature };
-      const subject = render(tmpl.subject, ctx);
-      const body    = render(tmpl.body_html, ctx);
       try {
         const made = await ensureCaseSummaries(r.case_number, r.reason);
         if (made.rx || made.missing) (log.ai_summaries = log.ai_summaries || []).push({ case_number: r.case_number, rx: !!made.rx, missing: !!made.missing });
       } catch (e) { log.errors.push({ stage: "summarize", case_number: r.case_number, error: String(e) }); }
-      if (gateByReason[r.reason]) {
+      try {
         await sb.rpc("compose_pending_attempt", { p_queue_id: r.queue_id, p_attempt_number: attemptNumber });
         log.gated += 1;
-        continue;
-      }
-      try {
-        const { data: senderRow } = await sb.rpc("pick_sender_mailbox", { p_case_number: r.case_number });
-        const rxAttachment = await getRxAttachment(r.case_number);
-        const sendRes = await graphSendMail(recipient, subject, body, r.case_number, senderRow, rxAttachment ? [rxAttachment] : null);
-        if (attemptNumber === 4) await sb.rpc("mark_escalation_target", { p_queue_id: r.queue_id });
-        await sb.rpc("record_attempt", { p_queue_id: r.queue_id, p_template_id: tmpl.id, p_to_email: recipient, p_subject: sendRes.tagged_subject, p_body_html: body, p_graph_message_id: sendRes.graph_message_id, p_graph_conversation_id: sendRes.graph_conversation_id });
-        const { data: lastAttempt } = await sb.from("dr_outreach_attempts").select("id").eq("queue_id", r.queue_id).order("created_at", { ascending: false }).limit(1).single();
-        await sb.rpc("record_outbox_outbound", { p_case_number: r.case_number, p_account_no: r.account_number, p_attempt_id: lastAttempt?.id ?? null, p_to_addr: recipient, p_subject: sendRes.tagged_subject, p_body_html: body, p_graph_msg_id: sendRes.graph_message_id });
-        log.sent += 1;
-      } catch (sendErr) {
-        await sb.from("dr_outreach_attempts").insert({ queue_id: r.queue_id, attempt_number: attemptNumber, template_id: tmpl.id, to_email: recipient, subject, body_html: body, status: "failed", error: String(sendErr) });
-        log.errors.push({ queue_id: r.queue_id, error: String(sendErr) });
+      } catch (e) {
+        log.errors.push({ queue_id: r.queue_id, error: `compose: ${String(e)}` });
       }
     }
   } catch (e) { log.errors.push({ stage: "outer", error: String(e) }); }
