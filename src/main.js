@@ -77,23 +77,16 @@ const OUTBOUND_REASON_COUNT_FIELDS = [
 // view (does not). Guards the parse-driven UI so scan-ack cards are unaffected.
 function hasParseFields(r) { return r && r.parsed !== undefined; }
 
-// Sent design-approval attempt N -> the template attempt the next follow-up uses.
-// 1..3 stay; the 4th is the escalation template (4); the 5th+ is the phone-call template (99).
-function nextDesignApprovalAttempt(sentN) {
-  const next = Number(sentN || 0) + 1;
-  if (next <= 3) return next;
-  if (next === 4) return 4;
-  return 99;
-}
-
-// "Call for now": once the next design-approval follow-up would be the escalation (4) or the phone
-// call (99), the card is time-sensitive — a phone call beats another email.
+// "Call for now": once we've ALREADY sent 3 design-approval follow-ups with no doctor answer
+// (design_approval_attempt_count >= 3), the case is time-sensitive — pick up the phone instead of
+// sending a 4th email. (The DB's compose_pending_attempt still drafts the next template — escalation
+// at the 4th, phone-call at the 5th+ — but the card flags the call at 3 so it can't drift.)
+const CALL_FOR_NOW_ATTEMPTS = 3;
 function outboundCallForNow(r) {
   if (!hasParseFields(r)) return false;
   const openReason = r.most_recent_unapproved_reason || 'design_approval';
   if (openReason !== 'design_approval') return false;
-  const next = nextDesignApprovalAttempt(r.design_approval_attempt_count);
-  return next === 4 || next === 99;
+  return Number(r.design_approval_attempt_count || 0) >= CALL_FOR_NOW_ATTEMPTS;
 }
 
 // Collapsed right-hand stamp: the design-approval attempt # when the case is in an active
@@ -564,8 +557,18 @@ function renderReady() {
     root.innerHTML = '<div class="empty"><strong>No approved Full-Arch cases are waiting for ABS to scan off.</strong><br/>Doctor-approved cases still at "Doctor Design Approval - Full Arch" will appear here.</div>';
     return;
   }
+  // Global text search — case #, pan, patient, practice, or doctor email/name.
+  const q = (globalSearch.value || '').trim().toLowerCase();
+  const filtered = q
+    ? readyRows.filter(r => [r.case_number, r.pan_number, r.patient_name, r.practice_name, r.dr_email, r.dr_last_name, r.dr_first_name]
+        .some(v => String(v || '').toLowerCase().includes(q)))
+    : readyRows;
+  if (!filtered.length) {
+    root.innerHTML = '<div class="empty"><strong>No cases match your search.</strong><br/>Clear the search to see all approved cases waiting for ABS.</div>';
+    return;
+  }
   // Group by practice for at-a-glance reading
-  const sorted = readyRows.slice().sort((a, b) => {
+  const sorted = filtered.slice().sort((a, b) => {
     const da = new Date(a.waiting_since).getTime();
     const db = new Date(b.waiting_since).getTime();
     return db - da;
@@ -592,11 +595,18 @@ function renderReady() {
         </tr>
       </thead>
       <tbody>`;
-  const srcLabel = { outreach: 'Outreach', casecoord: 'Case Coord', abs_advanced: 'ABS' };
+  // Approved-column labels per approval source. reply_approved / reply_approved_mods come from the
+  // Pending Replies "Approved" / "Approved + Mods" buttons; the latter is an action flag (the
+  // designer still has to make the mods before scanning), so it's labeled + colored to stand out.
+  const srcLabel = {
+    outreach: 'Outreach', casecoord: 'Case Coord', abs_advanced: 'ABS',
+    reply_approved: 'Approved', reply_approved_mods: 'Approved + Mods, contact designer',
+  };
   const rows = sorted.map(r => {
     const days = daysAgo(r.waiting_since);
     const late = r.doctor_due_date && new Date(r.doctor_due_date) < new Date();
     const src = srcLabel[r.approved_source] || (r.approved_source || '');
+    const srcColor = r.approved_source === 'reply_approved_mods' ? 'var(--red)' : 'var(--green)';
     return `<tr>
       <td><span class="pan">${esc(r.pan_number || '-')}</span></td>
       <td><span class="case-sub">${esc(r.case_number)}</span></td>
@@ -605,7 +615,7 @@ function renderReady() {
       <td>${esc(r.dr_email || '-')}</td>
       <td>${days}d (${fmtDay(r.waiting_since)})</td>
       <td class="${late ? 'late' : ''}">${fmtDay(r.doctor_due_date)}${late ? ' ⚠' : ''}</td>
-      <td><span style="color: var(--green); font-weight: 600;">${esc(src)}</span>${r.approved_on ? ' · ' + fmtDay(r.approved_on) : ''}</td>
+      <td><span style="color: ${srcColor}; font-weight: 600;">${esc(src)}</span>${r.approved_on ? ' · ' + fmtDay(r.approved_on) : ''}</td>
     </tr>`;
   }).join('');
   root.innerHTML = header + rows + '</tbody></table>';
@@ -681,10 +691,14 @@ function renderReschedule() {
     }).join('');
   }
 
-  const filteredRows = current ? reschedRows.filter(r => r.bucket === current) : reschedRows;
+  let filteredRows = current ? reschedRows.filter(r => r.bucket === current) : reschedRows;
+  // Global text search — case #, pan, patient, practice, or doctor email/name.
+  const q = (globalSearch.value || '').trim().toLowerCase();
+  if (q) filteredRows = filteredRows.filter(r => [r.case_number, r.pan_number, r.patient_name, r.practice_name, r.dr_email, r.dr_last_name]
+        .some(v => String(v || '').toLowerCase().includes(q)));
 
   if (!filteredRows.length) {
-    list.innerHTML = '<div class="empty"><strong>No cases match this filter.</strong></div>';
+    list.innerHTML = '<div class="empty"><strong>No cases match this filter or search.</strong></div>';
     return;
   }
 
@@ -1710,10 +1724,10 @@ function renderOutboundCard(r) {
     // carry a link by design). Replaces the old "⚠ No exocad link yet" tag.
     const noLinkAsterisk = (!isScanAck && !hasExocadLink)
       ? '<span class="nolink-asterisk" title="No exocad viewer link on file yet">*</span>' : '';
-    // Time-sensitive flag: once the next design-approval follow-up is the escalation (4) or phone
-    // call (99), surface "Call for now" so the coordinator picks up the phone instead of emailing.
+    // Time-sensitive flag: once we've already sent 3 design-approval follow-ups (see
+    // outboundCallForNow), surface it so the coordinator picks up the phone instead of emailing.
     const callForNowChip = outboundCallForNow(r)
-      ? '<span class="callnow-chip" title="Next step should be a phone call, not another email">📞 Call for now</span>' : '';
+      ? '<span class="callnow-chip" title="Already reached out 3+ times — pick up the phone instead of sending another email">📞 Time-sensitive · Call</span>' : '';
     // Most recent communication on the case — any medium (email / phone / note),
     // regardless of age — shown with its full details (the same content the Case
     // Lookup timeline shows). Rendered as a lighter-yellow sub-card to the left
@@ -2142,7 +2156,7 @@ function renderFullArchWipCard(r) {
   const noLinkAsterisk = !hasExocadLink
     ? '<span class="nolink-asterisk" title="No exocad viewer link on file yet">*</span>' : '';
   const callForNowChip = outboundCallForNow(r)
-    ? '<span class="callnow-chip" title="Next step should be a phone call, not another email">📞 Call for now</span>' : '';
+    ? '<span class="callnow-chip" title="Already reached out 3+ times — pick up the phone instead of sending another email">📞 Time-sensitive · Call</span>' : '';
   const missChip = r.will_miss_due_date
     ? '<span class="activity-chip miss">⚠ Will miss due date · ' + r.days_late_if_approved_now + 'd late</span>'
     : '';
@@ -2216,34 +2230,103 @@ function renderFullArchWipCard(r) {
           ` : ''}
         </div>
         <div class="actions">
-          <button class="act approve" onclick="composeOutreachForCase('${esc(r.case_number)}')">Draft outreach email</button>
+          <button class="act approve" onclick="openOutreachReasonPicker('${esc(r.case_number)}')">Draft outreach email</button>
           <button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>
         </div>
       </div>
     </div>`;
 }
 
-// "Draft outreach email" on a no-draft Full-Arch WIP card. Composes a design-approval draft via the
-// same intake RPC the Submit Request form uses, then reloads so the case re-appears as a normal
-// approvable card (attempt_id present) ready to edit and send.
-async function composeOutreachForCase(caseNumber) {
-  if (!confirm('Draft a doctor design-approval email for case ' + caseNumber + '?\n\nThe draft will appear here for you to review, edit, and send.')) return;
+// The reasons offered by the "Draft outreach email" picker — every reason that has at least one
+// dr_outreach_templates row, design_approval first. Selecting one composes that template's attempt.
+const OUTREACH_REASON_OPTIONS = [
+  'design_approval', 'design_modification', 'missing_info', 'waiting_on_parts',
+  'late_approval_notice', 'reschedule_check', 'scan_submission_ack',
+];
+
+// A blank summary still needs to fill the template's {{issue_summary}} placeholder, so fall back to
+// a sensible per-reason default the coordinator can edit on the drafted card.
+const OUTREACH_REASON_DEFAULT_SUMMARY = {
+  design_approval: 'Full Arch design approval',
+  design_modification: 'Revised design for approval',
+  missing_info: 'Information needed to proceed',
+  waiting_on_parts: 'Awaiting parts / models',
+  late_approval_notice: 'Updated arrival date',
+  reschedule_check: 'Updated delivery date',
+  scan_submission_ack: 'Scan submission follow-up',
+};
+
+// "Draft outreach email" → opens the reason picker. Builds the reason dropdown from
+// OUTREACH_REASON_OPTIONS (labels from REASON_LABEL), clears the optional summary/details, and
+// stashes the case number on the modal so submitOutreachReason can read it.
+function openOutreachReasonPicker(caseNumber) {
+  const modal = document.getElementById('outreach-reason-modal');
+  if (!modal) return;
+  modal.dataset.caseNumber = caseNumber || '';
+  const pill = document.getElementById('orp-case-pill');
+  if (pill) pill.textContent = caseNumber ? 'Case ' + caseNumber : '';
+  const sel = document.getElementById('orp-reason');
+  if (sel) {
+    sel.innerHTML = OUTREACH_REASON_OPTIONS
+      .map(r => `<option value="${r}">${esc(REASON_LABEL[r] || r)}</option>`).join('');
+    sel.value = 'design_approval';
+  }
+  const summary = document.getElementById('orp-summary');
+  if (summary) summary.value = '';
+  const details = document.getElementById('orp-details');
+  if (details) details.value = '';
+  const btn = document.getElementById('orp-draft-btn');
+  if (btn) btn.disabled = false;
+  modal.classList.add('open');
+  setTimeout(() => document.getElementById('orp-reason')?.focus(), 60);
+}
+
+function closeOutreachReasonPicker() {
+  document.getElementById('outreach-reason-modal')?.classList.remove('open');
+}
+
+// Draft button in the reason picker: read the chosen reason + optional summary/details and compose.
+async function submitOutreachReason() {
+  const modal = document.getElementById('outreach-reason-modal');
+  if (!modal) return;
+  const caseNumber = modal.dataset.caseNumber || '';
+  const reason  = document.getElementById('orp-reason')?.value || 'design_approval';
+  const summary = (document.getElementById('orp-summary')?.value || '').trim();
+  const details = (document.getElementById('orp-details')?.value || '').trim();
+  const btn = document.getElementById('orp-draft-btn');
+  if (btn) btn.disabled = true;
+  const ok = await composeOutreachForCase(caseNumber, { reason, summary, details });
+  if (ok) closeOutreachReasonPicker();
+  else if (btn) btn.disabled = false;
+}
+
+// Composes a draft for a no-draft Full-Arch WIP card via the same intake RPC the Submit Request form
+// uses, then reloads so the case re-appears as a normal approvable card (attempt_id present) whose
+// subject/body are editable before sending. `opts.reason` selects the dr_outreach_templates template;
+// opts.summary fills {{issue_summary}}, opts.details becomes the "what we need" bullets. Returns true
+// on success so the caller (the reason picker) knows whether to close. Defaults to design_approval.
+async function composeOutreachForCase(caseNumber, opts = {}) {
+  const reason = opts.reason || 'design_approval';
+  const summary = (opts.summary || '').trim() || (OUTREACH_REASON_DEFAULT_SUMMARY[reason] || REASON_LABEL[reason] || 'Outreach');
+  const details = (opts.details || '').trim() || null;
   try {
     const me = loginIdentity();
     await callRpc('submit_outreach_request', {
       p_case_number: caseNumber,
-      p_reason: 'design_approval',
+      p_reason: reason,
       p_requested_by: me.name,
-      p_issue_summary: 'Full Arch design approval',
-      p_details: null,
+      p_issue_summary: summary,
+      p_details: details,
       p_priority: 'standard',
       p_login_name: me.name,
       p_login_email: me.email,
     });
     toast('Draft created — review it below', 'ok');
     await loadOutbound();
+    return true;
   } catch (e) {
     toast('Could not draft: ' + (e?.message || e), 'err');
+    return false;
   }
 }
 
@@ -6120,7 +6203,7 @@ Object.assign(window, {
   toggleHiddenSenders, addHiddenSender, removeHiddenSender, closeHiddenSenders,
   // Outbound actions
   toggleItem, approve, showEdit, hideEdit, resummarize, reject, saveEdit, saveExocadLink,
-  composeOutreachForCase,
+  composeOutreachForCase, openOutreachReasonPicker, closeOutreachReasonPicker, submitOutreachReason,
   // Inbound actions
   classifyReply, manuallyLinkReply, escalateForCall, markReplyNoCase,
   // Reschedule filters / actions
