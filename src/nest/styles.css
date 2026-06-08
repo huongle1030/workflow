@@ -1,0 +1,139 @@
+/* Nest mode — Mill / Print nesting boards. Scoped under #panel-nest .nest-root.
+   Uses the suite's CSS variables (defined in index.html) with safe fallbacks. */
+
+.nest-root { padding: 18px 28px 48px; }
+
+.nest-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.nest-legend {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 12px; color: var(--slate, #6B7785);
+}
+.nest-refresh {
+  border: 1px solid var(--line2, #d8dee3); background: var(--white, #fff);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer;
+  font-size: 13px; color: var(--text, #102a36);
+  transition: background .14s, border-color .14s;
+}
+.nest-refresh:hover:not(:disabled) { background: var(--pale, #f4f7f9); }
+.nest-refresh:disabled { opacity: .55; cursor: default; }
+
+/* Both-board (manager/exec/admin) layout: Mill | Print side-by-side. */
+.nest-boards.nest-split {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start;
+}
+.nest-boards.nest-split .nest-board + .nest-board,
+.nest-boards.nest-split > .nest-board:nth-child(2) {
+  border-left: 1px solid var(--line, #e3e8eb); padding-left: 24px;
+}
+@media (max-width: 1100px) {
+  .nest-boards.nest-split { grid-template-columns: 1fr; }
+  .nest-boards.nest-split > .nest-board:nth-child(2) { border-left: 0; padding-left: 0; }
+}
+
+.nest-board { min-width: 0; }
+.nest-board-head { margin-bottom: 14px; }
+.nest-board-title {
+  margin: 0 0 10px; font-size: 16px; font-weight: 700;
+  color: var(--navy, #052030); display: flex; align-items: center; gap: 8px;
+}
+.nest-count {
+  font-size: 12px; font-weight: 600; color: var(--slate, #6B7785);
+  background: var(--pale, #f1f5f7); border-radius: 999px; padding: 2px 9px;
+}
+
+.nest-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.nest-filter {
+  border: 1px solid var(--line2, #d8dee3); border-radius: 8px;
+  padding: 6px 10px; font-size: 12.5px; background: var(--white, #fff);
+  color: var(--text, #102a36); cursor: pointer;
+}
+
+.nest-grid { display: grid; gap: 12px; }
+.nest-empty {
+  grid-column: 1 / -1; padding: 26px; text-align: center;
+  color: var(--slate, #6B7785); font-size: 13px;
+  background: var(--bg, #fafbfc); border: 1px dashed var(--line, #e3e8eb); border-radius: 10px;
+}
+
+/* Tile — priority is conveyed by the left border + badges. */
+.nest-tile {
+  background: var(--white, #fff);
+  border: 1px solid var(--slate-light, #e3e8eb);
+  border-left: 4px solid var(--line2, #cdd5da);
+  border-radius: 10px; padding: 12px 14px; min-width: 0;
+  box-shadow: 0 1px 2px rgba(5, 32, 48, .04);
+  cursor: pointer;
+  transition: box-shadow .14s, transform .14s, border-color .14s;
+}
+.nest-tile:hover { box-shadow: 0 4px 14px rgba(5, 32, 48, .12); transform: translateY(-1px); }
+.nest-tile:focus-visible { outline: 2px solid var(--gold, #C79A3A); outline-offset: 2px; }
+.nest-tile.is-hot  { border-left-color: var(--gold, #C79A3A); }
+.nest-tile.is-rush { border-left-color: #d23b3b; }
+.nest-tile.pan-unassigned .nest-tile-pan { color: var(--slate, #6B7785); font-style: italic; font-weight: 600; }
+
+.nest-tile-pan {
+  font-size: 15px; font-weight: 800; color: var(--navy, #052030);
+  letter-spacing: .2px; word-break: break-word; line-height: 1.2;
+}
+.nest-tile-case { font-size: 12.5px; color: var(--text, #33474f); margin-top: 3px; }
+.nest-tile-due  { font-size: 12px; color: var(--slate, #6B7785); margin-top: 4px; }
+.nest-tile-step {
+  display: inline-block; margin-top: 7px; font-size: 10.5px; font-weight: 600;
+  color: var(--navy, #052030); background: var(--pale, #f1f5f7);
+  border-radius: 5px; padding: 2px 7px;
+}
+
+.nest-tile-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 9px; }
+.nest-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: .4px;
+  border-radius: 5px; padding: 2px 6px; text-transform: uppercase;
+}
+.nest-badge.rush { background: #fdecec; color: #c0322f; }
+.nest-badge.hot  { background: var(--gold-tint, #f7efda); color: #9a7320; }
+.nest-badge.hold { background: #eef2f4; color: #5a6b75; }
+
+.nest-flag { color: #d23b3b; font-weight: 800; margin-left: 3px; cursor: help; }
+
+.nest-loading, .nest-error, .nest-norole {
+  padding: 40px 6px; color: var(--slate, #6B7785); font-size: 14px;
+}
+.nest-error { color: #c0322f; }
+
+/* Case-detail modal (click a tile) */
+.nest-modal-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(5, 32, 48, .45);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.nest-modal {
+  position: relative; width: 100%; max-width: 460px;
+  background: var(--white, #fff); border-radius: 14px;
+  box-shadow: 0 24px 60px -12px rgba(5, 32, 48, .5);
+  padding: 22px 24px 18px; max-height: 88vh; overflow: auto;
+}
+.nest-modal-x {
+  position: absolute; top: 12px; right: 12px;
+  border: 0; background: transparent; cursor: pointer;
+  font-size: 22px; line-height: 1; color: var(--slate, #6B7785);
+  width: 30px; height: 30px; border-radius: 7px;
+}
+.nest-modal-x:hover { background: var(--pale, #f1f5f7); color: var(--navy, #052030); }
+
+.nest-modal-head { border-bottom: 1px solid var(--line, #e3e8eb); padding-bottom: 14px; margin-bottom: 6px; }
+.nest-modal-pan { font-size: 20px; font-weight: 800; color: var(--navy, #052030); }
+.nest-modal-case { font-size: 13px; color: var(--slate, #6B7785); margin-top: 3px; }
+.nest-modal-head .nest-tile-badges { margin-top: 10px; }
+
+.nest-modal-body { display: flex; flex-direction: column; }
+.nest-modal-row {
+  display: flex; justify-content: space-between; gap: 16px;
+  padding: 10px 0; border-bottom: 1px solid var(--bg, #f1f4f6); font-size: 13.5px;
+}
+.nest-modal-row:last-child { border-bottom: 0; }
+.nest-modal-row .k { color: var(--slate, #6B7785); flex: 0 0 auto; }
+.nest-modal-row .v { color: var(--text, #102a36); font-weight: 600; text-align: right; min-width: 0; }
+.nest-modal-sub { color: var(--slate, #6B7785); font-weight: 400; }
+.nest-modal-muted { color: var(--slate, #6B7785); font-weight: 400; font-style: italic; }

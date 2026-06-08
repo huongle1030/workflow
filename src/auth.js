@@ -31,6 +31,9 @@ export const ROLE_OPTIONS = [
   // QC mode-only roles.
   { value: 'qc_tech',          label: 'QC Tech' },
   { value: 'dept_lead',        label: 'Department Lead' },
+  // Nest mode production-only roles (Mill / Print nesting boards).
+  { value: 'nest_mill',        label: 'Nest - Mill' },
+  { value: 'nest_print',       label: 'Nest - Print' },
   // Case Lookup-only role.
   { value: 'ninja',            label: 'Ninja' },
 ];
