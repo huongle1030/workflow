@@ -11,6 +11,11 @@ initCaseFlow();
 // Quality Control mode (Log QC Reject + Internal Remake). Importing for side
 // effects: sets window.QCMODE. See PRD_quality_control_mode.md.
 import './qc/app.js';
+// Nest mode (Mill / Print nesting boards). Importing for side effects: sets
+// window.NEST. See prd/nest-mode.md.
+import './nest/app.js';
+// Design Dept board — a tab inside Design Approvals (outreach). Sets window.DESIGN.
+import './design/app.js';
 
 // Coordinator-uploaded PDF attachments, keyed by attempt_id. Populated in loadOutbound()
 // (bulk read of dr_outreach_attempt_attachments) and rendered as chips + a drop zone on
@@ -1290,7 +1295,7 @@ function updateGlobalSearchScope() {
   };
   // Tabs without a meaningful global search: hide just the search bar
   // (the KPI strip above still shows on every tab)
-  const hideOn = ['submit', 'audit', 'editlog', 'feedback'];
+  const hideOn = ['submit', 'audit', 'editlog', 'feedback', 'designdept'];
   if (hideOn.includes(activeTab)) {
     searchRow.style.display = 'none';
     return;
@@ -3310,7 +3315,7 @@ function closeSettings() {
 // =====================================================================
 let currentMode = localStorage.getItem('skdla_mode') || 'outreach';
 
-const OUTREACH_PANELS = ['outbound','approval','ready','inbound','audit','submit','reschedule','editlog','feedback'];
+const OUTREACH_PANELS = ['outbound','approval','ready','inbound','audit','submit','reschedule','editlog','feedback','designdept'];
 const CC_PANELS       = ['cc-dashboard','cc-newlog','cc-history','cc-tracker','cc-coordinators','cc-prefs'];
 // Case Lookup is its own top-level mode (single panel `panel-lookup`, no tab row),
 // available to every role. See switchMode's `lookup` branch.
@@ -3324,6 +3329,9 @@ const LANDING_PANELS  = ['landing'];
 // `qc` is a single panel (id `panel-qc`) rendered by src/qc/app.js (Quality
 // Control: Log QC Reject + Internal Remake). See PRD_quality_control_mode.md.
 const CASEFLOW_PANELS = ['dataentry','casereview','scanning','design','qc'];
+// Nest mode — a single panel (id `panel-nest`, no tab row) rendered by
+// src/nest/app.js (Mill / Print nesting boards). See prd/nest-mode.md.
+const NEST_PANELS = ['nest'];
 const CASEFLOW_MODES = {
   dataentry:  { tabs: 'tabs-dataentry',  name: 'Data Entry',  sub: 'Enter case info + AOX checklist, route to review' },
   casereview: { tabs: 'tabs-casereview', name: 'Case Review', sub: 'AOX review checklist + route to design/scanning' },
@@ -3332,7 +3340,7 @@ const CASEFLOW_MODES = {
   qc:         { tabs: 'tabs-qc',         name: 'Quality Control', sub: 'Log QC rejects & internal remakes' },
 };
 const ALL_MODE_TABROWS = ['tabs-outreach','tabs-cc','tabs-dataentry','tabs-casereview','tabs-scanning','tabs-design','tabs-qc'];
-const ALL_MODE_CHECKS  = ['check-landing','check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design','check-qc','check-lookup'];
+const ALL_MODE_CHECKS  = ['check-landing','check-outreach','check-cc','check-dataentry','check-casereview','check-scanning','check-design','check-qc','check-nest','check-lookup'];
 
 // Display metadata for every navigable mode (name + one-line description), used to
 // build the landing-page cards. Mirrors the brand-switcher copy in index.html.
@@ -3346,9 +3354,10 @@ const MODE_META = {
   design:     { name: 'Design Team',      desc: 'Design checklist, QC, outsourcing, ZIP export' },
   outreach:   { name: 'Design Approvals', desc: 'Coordinator inbox · doctor outreach automation', gold: true },
   qc:         { name: 'Quality Control',  desc: 'Log QC rejects & internal remakes' },
+  nest:       { name: 'Nest',             desc: 'Milling & printing nest worklists, prioritized' },
 };
 // Visual order of the landing-page cards (mirrors the brand-switcher item order).
-const LANDING_ORDER = ['lookup','cc','dataentry','casereview','scanning','design','outreach','qc'];
+const LANDING_ORDER = ['lookup','cc','dataentry','casereview','scanning','design','outreach','qc','nest'];
 
 // Mode (brand-switcher app) -> capability that gates it. Outreach and Case
 // Coordination are whole apps; the four CaseFlow modes each have their own cap.
@@ -3361,6 +3370,7 @@ const MODE_CAP = {
   scanning:   CAPABILITIES.CASEFLOW_SCAN,
   design:     CAPABILITIES.CASEFLOW_DESIGN,
   qc:         CAPABILITIES.CASEFLOW_QC,
+  nest:       CAPABILITIES.MODE_NEST,
   // NOTE: `lookup` is intentionally absent — Case Lookup is ungated, so
   // isModePermitted('lookup') returns true for every role (see below).
 };
@@ -3373,7 +3383,7 @@ const MODE_CAP = {
 // NOTE: all roles now BOOT into the dedicated `landing` home page (see boot() and
 // renderLanding); this list is only the fallback used by firstPermittedMode() when
 // a role is bounced out of a forbidden mode, so `landing` is intentionally absent.
-const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design','qc','lookup'];
+const MODE_ORDER = ['outreach','cc','dataentry','casereview','scanning','design','qc','nest','lookup'];
 
 // True if the current role may enter this mode.
 function isModePermitted(mode) {
@@ -3416,8 +3426,8 @@ function switchMode(mode) {
     document.getElementById('subtabs-actions')?.classList.add('hidden');
   }
 
-  // Hide all panels (landing + outreach + cc + caseflow + lookup) then show the default for this mode.
-  [...LANDING_PANELS, ...OUTREACH_PANELS, ...CC_PANELS, ...CASEFLOW_PANELS, ...LOOKUP_PANELS].forEach(p =>
+  // Hide all panels (landing + outreach + cc + caseflow + nest + lookup) then show the default for this mode.
+  [...LANDING_PANELS, ...OUTREACH_PANELS, ...CC_PANELS, ...CASEFLOW_PANELS, ...NEST_PANELS, ...LOOKUP_PANELS].forEach(p =>
     document.getElementById('panel-' + p)?.classList.add('hidden'));
   document.querySelectorAll('#tabs-outreach .tab, #tabs-cc .tab').forEach(t => t.classList.remove('active'));
 
@@ -3445,6 +3455,10 @@ function switchMode(mode) {
     // Empty state: show the informational legend until a case is looked up.
     const r = document.getElementById('lookup-result');
     if (r && !r.innerHTML.trim()) r.innerHTML = caseLookupLegendHtml(false);
+  } else if (mode === 'nest') {
+    document.getElementById('panel-nest').classList.remove('hidden');
+    setModeLabel('Nest');
+    if (window.NEST && window.NEST.render) window.NEST.render();
   } else if (cf) {
     document.getElementById('panel-' + mode).classList.remove('hidden');
     setModeLabel(cf.name);
@@ -3573,6 +3587,7 @@ function runTabSideEffects(which) {
   if (which === 'approval') renderPendingOut();
   if (which === 'editlog') loadEditLog();
   if (which === 'feedback') loadFeedback();
+  if (which === 'designdept' && window.DESIGN && window.DESIGN.render) window.DESIGN.render();
   if (typeof updateGlobalSearchScope === 'function') updateGlobalSearchScope();
 }
 

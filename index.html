@@ -3641,6 +3641,9 @@
       <div class="app-item" data-mode="qc" onclick="switchMode('qc'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
         <span class="name">Quality Control</span><span id="check-qc" class="check" style="display:none;">✓</span>
       </div>
+      <div class="app-item" data-mode="nest" onclick="switchMode('nest'); event.stopPropagation(); document.getElementById('brand-switcher').classList.remove('open');">
+        <span class="name">Nest</span><span id="check-nest" class="check" style="display:none;">✓</span>
+      </div>
     </div>
   </div>
   <span class="updated" id="updated-status"><span class="dot" id="status-dot"></span><span id="lastUpdated">Loading…</span></span>
@@ -3699,6 +3702,7 @@
 </div>
 
 <div class="tabs" id="tabs-outreach">
+  <div class="tab" data-tab="designdept">Dashboard</div>
   <div class="tab" data-tab="submit">Submit Request</div>
   <div class="tab tab-parent active" data-group="pending">Pending <span class="badge" id="badge-pending">–</span></div>
   <div class="tab tab-parent" data-group="actions">Actions <span class="badge" id="badge-actions">–</span></div>
@@ -3943,6 +3947,10 @@
   <h3 style="font-family: 'Montserrat', sans-serif; font-size: 16px; color: var(--navy); margin-bottom: 12px; font-weight: 600;">Recent submissions</h3>
   <div id="list-feedback"><div class="loading">Loading…</div></div>
 </div>
+
+<!-- Design Dept board — Nest-style tile dashboard for cases in the design department.
+     Rendered by src/design/app.js (window.DESIGN.render). Ungated outreach tab. -->
+<div class="hidden" id="panel-designdept"></div>
 
 <div class="panel hidden" id="panel-submit">
   <h2>Submit Request <span style="color: var(--slate); font-weight: 400; font-size: 14px; font-family: 'Montserrat', sans-serif;">·  case review &amp; case entry intake</span></h2>
@@ -4298,6 +4306,10 @@ Clean margins are needed before we can proceed with the design"></textarea>
 <div class="hidden" id="panel-scanning"></div>
 <div class="hidden" id="panel-design"></div>
 <div class="hidden" id="panel-qc"></div>
+
+<!-- Nest mode (Mill / Print nesting boards) — rendered by src/nest/app.js (window.NEST.render).
+     switchMode toggles `hidden`. See prd/nest-mode.md. -->
+<div class="hidden" id="panel-nest"></div>
 
 <!-- CaseFlow New Case modal (scoped under .cf-root styling) -->
 <div class="cf-modal-overlay" id="cf-new-case-modal" role="dialog" aria-modal="true">

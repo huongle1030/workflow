@@ -39,6 +39,11 @@ export const ROLES = {
   // Case Lookup-only role. Holds NO capabilities, so every gated mode is hidden;
   // the only mode it can reach is the ungated Case Lookup (see ROLE_CAPABILITIES).
   NINJA:             'ninja',
+  // Nest mode production-only roles. Each sees ONLY its side of the Nest dashboard
+  // (Mill or Print) and nothing else. Managers/executive/admin see both sides; no
+  // other role can see Nest (MODE_NEST is restricted — see RESTRICTED_CAPS).
+  NEST_MILL:         'nest_mill',
+  NEST_PRINT:        'nest_print',
 };
 
 
@@ -57,6 +62,8 @@ export const ROLE_LABELS = {
   [ROLES.QC_TECH]:           'QC Tech',
   [ROLES.DEPT_LEAD]:         'Department Lead',
   [ROLES.NINJA]:             'Ninja',
+  [ROLES.NEST_MILL]:         'Nest - Mill',
+  [ROLES.NEST_PRINT]:        'Nest - Print',
 };
 
 // ---- Capability keys ----
@@ -99,6 +106,12 @@ export const CAPABILITIES = {
   //   QC_REMAKE -> "Internal Remake" tab (dept_lead + full-access)
   CASEFLOW_QC_REJECT: 'caseflow.qc.reject',
   CASEFLOW_QC_REMAKE: 'caseflow.qc.remake',
+  // Nest mode (Mill / Print nesting boards). MODE_NEST gates the whole mode;
+  // NEST_MILL / NEST_PRINT gate the two boards. All three are RESTRICTED (kept out
+  // of ALL_CAPS) so only manager/executive/admin + the two nest_* roles get them.
+  MODE_NEST:        'mode.nest',
+  NEST_MILL:        'nest.mill',
+  NEST_PRINT:       'nest.print',
 };
 
 const C = CAPABILITIES;
@@ -111,6 +124,12 @@ const C = CAPABILITIES;
 const RESTRICTED_CAPS = [
   C.VIEW_CASE_SUGGESTION,
   C.HIDE_SENDER,
+  // Nest is opt-in per role — keep it out of the blanket full-access set so
+  // account_manager / technical_advisor do NOT inherit it. Granted explicitly to
+  // manager / executive / admin and the two nest_* roles below.
+  C.MODE_NEST,
+  C.NEST_MILL,
+  C.NEST_PRINT,
 ];
 
 const DESIGN_APPROVER_CAPS = [
@@ -157,6 +176,12 @@ const DEPT_LEAD_CAPS   = [C.CASEFLOW_QC, C.CASEFLOW_QC_REMAKE];
 // to 'lookup'. Do NOT add caps here or other modes will become visible.
 const NINJA_CAPS       = [];
 
+// Nest roles. Each production role sees the Nest mode + only its own board; the
+// full-access roles (manager/executive/admin) get both boards (NEST_ALL_CAPS).
+const NEST_ALL_CAPS    = [C.MODE_NEST, C.NEST_MILL, C.NEST_PRINT];
+const NEST_MILL_CAPS   = [C.MODE_NEST, C.NEST_MILL];
+const NEST_PRINT_CAPS  = [C.MODE_NEST, C.NEST_PRINT];
+
 // Full capability set — account_manager and above see the whole app, EXCEPT
 // restricted capabilities (granted explicitly per role below).
 const ALL_CAPS = Object.values(CAPABILITIES).filter(c => !RESTRICTED_CAPS.includes(c));
@@ -168,11 +193,11 @@ export const ROLE_CAPABILITIES = {
   // Technical Advisor mirrors Account Manager exactly (full access set, which
   // already includes all 4 CaseFlow modes). Absorbs the retired edward_ta role.
   [ROLES.TECHNICAL_ADVISOR]: new Set(ALL_CAPS),
-  // Manager additionally can hide/unhide senders.
-  [ROLES.MANAGER]:         new Set([...ALL_CAPS, C.HIDE_SENDER]),
-  // Executive additionally sees the AI case-number suggestion and can hide senders.
-  [ROLES.EXECUTIVE]:       new Set([...ALL_CAPS, C.VIEW_CASE_SUGGESTION, C.HIDE_SENDER]),
-  [ROLES.ADMIN]:           new Set(ALL_CAPS), // admin also short-circuits in can()
+  // Manager additionally can hide/unhide senders and sees both Nest boards.
+  [ROLES.MANAGER]:         new Set([...ALL_CAPS, C.HIDE_SENDER, ...NEST_ALL_CAPS]),
+  // Executive additionally sees the AI case-number suggestion, can hide senders, and sees both Nest boards.
+  [ROLES.EXECUTIVE]:       new Set([...ALL_CAPS, C.VIEW_CASE_SUGGESTION, C.HIDE_SENDER, ...NEST_ALL_CAPS]),
+  [ROLES.ADMIN]:           new Set([...ALL_CAPS, ...NEST_ALL_CAPS]), // admin also short-circuits in can()
   // Entry roles: Design Approvals access + a CaseFlow subset.
   [ROLES.DATA_ENTRY]:      new Set(DATA_ENTRY_CAPS),
   [ROLES.CASE_REVIEW]:     new Set(CASE_REVIEW_CAPS),
@@ -183,6 +208,9 @@ export const ROLE_CAPABILITIES = {
   [ROLES.DEPT_LEAD]:       new Set(DEPT_LEAD_CAPS),
   // Case Lookup-only role — empty cap set; only the ungated Case Lookup is reachable.
   [ROLES.NINJA]:           new Set(NINJA_CAPS),
+  // Nest production-only roles — Nest mode + only their own board (Mill or Print).
+  [ROLES.NEST_MILL]:       new Set(NEST_MILL_CAPS),
+  [ROLES.NEST_PRINT]:      new Set(NEST_PRINT_CAPS),
 };
 
 // Returns the current signed-in employee's role string, or null if unknown.
