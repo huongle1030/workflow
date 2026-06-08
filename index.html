@@ -2685,7 +2685,7 @@
     font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
     text-transform: uppercase; color: var(--slate);
   }
-  .cn-field input, .cn-field textarea {
+  .cn-field input, .cn-field textarea, .cn-field select {
     padding: 8px 12px;
     border: 1px solid var(--slate-light);
     border-radius: 6px;
@@ -2696,7 +2696,7 @@
     outline: none;
     resize: vertical;
   }
-  .cn-field input:focus, .cn-field textarea:focus {
+  .cn-field input:focus, .cn-field textarea:focus, .cn-field select:focus {
     border-color: var(--blue);
     box-shadow: 0 0 0 3px rgba(24, 130, 199, 0.1);
   }
@@ -4443,6 +4443,37 @@ Clean margins are needed before we can proceed with the design"></textarea>
       <button class="act slate" onclick="closeCallNotes()">Cancel</button>
       <button class="act blue" onclick="generateCallSummary()" id="cn-generate-btn">Generate Summary</button>
       <button class="act approve" onclick="printCallNotes()">Print PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- Draft Outreach modal — opens from "Draft outreach email" on a no-draft Pending Outbound card.
+     Pick a reason (one of the dr_outreach_templates reasons); composing pulls that template into a
+     draft, which then appears on the card below where the subject/body are editable before sending. -->
+<div class="modal-overlay" id="outreach-reason-modal" onclick="if(event.target===this)closeOutreachReasonPicker()">
+  <div class="modal-panel" style="max-width: 560px;">
+    <div class="modal-header">
+      <h3>Draft outreach email <span class="cc-stage-modal-pill" id="orp-case-pill"></span></h3>
+      <button class="modal-close" onclick="closeOutreachReasonPicker()" aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="cn-field cn-full">
+        <label>Reason / template</label>
+        <select id="orp-reason"></select>
+      </div>
+      <div class="cn-field cn-full">
+        <label>Short summary <span style="font-weight:400;color:var(--slate);">(optional — fills {{issue_summary}} in the template)</span></label>
+        <input type="text" id="orp-summary" placeholder="e.g. Need updated bite registration" />
+      </div>
+      <div class="cn-field cn-full">
+        <label>Details <span style="font-weight:400;color:var(--slate);">(optional — one bullet per line; used for Missing Info / Modification)</span></label>
+        <textarea id="orp-details" rows="4" placeholder="What we need from the office…"></textarea>
+      </div>
+      <div style="font-size:12px;color:var(--slate);margin-top:4px;">The draft appears on the card below — you can edit the subject and body there before sending.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="act slate" onclick="closeOutreachReasonPicker()">Cancel</button>
+      <button class="act approve" id="orp-draft-btn" onclick="submitOutreachReason()">Draft email</button>
     </div>
   </div>
 </div>
