@@ -9,11 +9,32 @@ import {
   DEPARTMENTS, TEAMS, TECHNICIANS_BY_TEAM, EXPERTS,
 } from './constants.js';
 import * as Data from './data.js';
+import { can, CAPABILITIES } from '../permissions.js';
 import './styles.css';
+
+// Per-tab access. qc_tech sees only "QC Reject"; dept_lead sees only "Internal Remake";
+// full-access roles (admin/manager/etc.) hold both caps and see both.
+function canSeeTab(tab) {
+  if (tab === 'qc') return can(CAPABILITIES.CASEFLOW_QC_REJECT);
+  if (tab === 'ir') return can(CAPABILITIES.CASEFLOW_QC_REMAKE);
+  return false;
+}
+// The first tab the current user is allowed to see (defaults to 'qc' if somehow neither).
+function firstAllowedTab() {
+  if (canSeeTab('qc')) return 'qc';
+  if (canSeeTab('ir')) return 'ir';
+  return 'qc';
+}
 
 // ── module state ────────────────────────────────────────────────────
 const EMPTY_QC = { case_number: '', team: '', technician: '', qc_reject: 'ASAP(Same day)', reject_type: '', reject_details: '', ship_date: '' };
-const EMPTY_IR = { case_number: '', department: '', logged_by: '', ship_date: '', dr_due_date: '', description: '' };
+const EMPTY_IR = {
+  case_number: '', department: '', logged_by: '',
+  technician: '', issue_step: '',
+  ship_date: '', dr_due_date: '',
+  received_date: '', start_date: '', time_in_lab_days: null, total_invoice: null,
+  description: '',
+};
 
 const state = {
   activeTab: 'qc',           // 'qc' | 'ir'
@@ -29,6 +50,12 @@ const state = {
   needsExpert: null,         // null | true | false
   irSaving: false,
   irDone: false,
+  // Internal Remake case auto-lookup (populates ship/due/received/start/time-in-lab/invoice
+  // + the "step where issue occurred" dropdown when the case number is entered).
+  irSteps: [],               // [{ step, seq, start_date, finish_date, tech }]
+  irLookupCase: '',          // the case number the current auto-fill came from
+  irLookupLoading: false,
+  irLookupStatus: '',        // '' | 'found' | 'notfound' | 'error'
   // Recent QC rejects table (QC Reject tab)
   recent: [],
   recentLoaded: false,
@@ -64,6 +91,8 @@ function optionList(arr, selected, placeholder) {
 
 // ── public entry ────────────────────────────────────────────────────
 export function renderQcMode() {
+  // Land on a tab the user is allowed to see (e.g. dept_lead opens straight to Internal Remake).
+  if (!canSeeTab(state.activeTab)) state.activeTab = firstAllowedTab();
   render();
   ensureRecentLoaded();
 }
@@ -90,11 +119,13 @@ function header() {
       '<span class="qc-segtab-label">' + esc(label) + '</span>' +
       '<span class="qc-segtab-sub">' + esc(sub) + '</span>' +
     '</button>';
+  // Only render the tab(s) this role may use. With a single visible tab the segmented control
+  // collapses to one button (and the body always renders that allowed tab).
+  const tabs = [];
+  if (canSeeTab('qc')) tabs.push(tab('qc', 'QC Reject', 'ASAP · Repair · Remake'));
+  if (canSeeTab('ir')) tabs.push(tab('ir', 'Internal Remake', 'Department leads'));
   return '<div class="qc-header">' +
-    '<div class="qc-seg">' +
-      tab('qc', 'QC Reject', 'ASAP · Repair · Remake') +
-      tab('ir', 'Internal Remake', 'Department leads') +
-    '</div></div>';
+    '<div class="qc-seg">' + tabs.join('') + '</div></div>';
 }
 
 // ── QC Reject (3-step) ──────────────────────────────────────────────
@@ -185,25 +216,53 @@ function renderInternalRemake() {
       '</div>' +
       '<button class="act blue" onclick="QCMODE.resetIr()" style="margin-top:16px">Log another internal remake</button></div>';
   }
-  const canSubmit = !!(f.case_number.trim() && f.department && f.logged_by.trim() &&
-    f.ship_date && f.dr_due_date && f.description.trim() && state.needsExpert !== null);
+  // The "step where issue occurred" is required only once the case's steps are loaded.
+  const stepRequiredOk = state.irSteps.length === 0 || !!f.issue_step;
+  const canSubmit = !!(f.case_number.trim() && f.department && f.logged_by.trim() && f.technician.trim() &&
+    f.ship_date && f.dr_due_date && f.description.trim() && stepRequiredOk && state.needsExpert !== null);
   const yn = (val, label, sub) => {
     const a = state.needsExpert === val;
     return '<button class="qc-yn' + (a ? (val ? ' active-purple' : ' active-green') : '') + '" onclick="QCMODE.setNeedsExpert(' + val + ')">' +
       '<span class="qc-yn-label">' + label + '</span><span class="qc-yn-sub">' + sub + '</span></button>';
   };
+  // Case-number lookup status line (auto-populate feedback).
+  let lookupNote = '';
+  if (state.irLookupLoading) lookupNote = '<div class="qc-lookup-note loading">Looking up case…</div>';
+  else if (state.irLookupStatus === 'found') lookupNote = '<div class="qc-lookup-note ok">✓ Case found — dates, time in lab, invoice &amp; steps auto-filled below.</div>';
+  else if (state.irLookupStatus === 'notfound') lookupNote = '<div class="qc-lookup-note warn">Case not found — enter the dates and step manually.</div>';
+  else if (state.irLookupStatus === 'error') lookupNote = '<div class="qc-lookup-note warn">Couldn\'t load case details — enter manually.</div>';
+  // "Step where issue occurred" options come from the case's Case Steps (workflow order).
+  const stepPlaceholder = state.irLookupLoading ? 'Loading steps…'
+    : (state.irSteps.length ? 'Select the step where the issue occurred' : 'Enter case number to load steps');
+  const stepOptions = '<option value="">' + esc(stepPlaceholder) + '</option>' +
+    state.irSteps.map(s => '<option value="' + attr(s.step) + '"' + (s.step === f.issue_step ? ' selected' : '') + '>' + esc(s.step) + '</option>').join('');
+  // Read-only auto-populated displays.
+  const tilStr = (f.time_in_lab_days == null) ? '' : (f.time_in_lab_days + ' day' + (f.time_in_lab_days === 1 ? '' : 's'));
+  const invStr = (f.total_invoice == null) ? '' : ('$' + Number(f.total_invoice).toLocaleString('en-US', { maximumFractionDigits: 0 }));
   return '<div class="cc-form-card" style="max-width:none">' +
     '<div class="cc-form-grid">' +
       '<div class="full"><label>Case Number <span class="req"></span></label>' +
-        '<input class="cc-input mono" type="text" placeholder="e.g. 2026-12345" value="' + attr(f.case_number) + '" oninput="QCMODE.setIr(\'case_number\', this.value)"></div>' +
+        '<input class="cc-input mono" type="text" placeholder="e.g. 2026-12345" value="' + attr(f.case_number) + '" oninput="QCMODE.setIr(\'case_number\', this.value)" onchange="QCMODE.lookupIrCase()">' + lookupNote + '</div>' +
       '<div><label>Department <span class="req"></span></label>' +
         '<select class="cc-input" onchange="QCMODE.setIr(\'department\', this.value)">' + optionList(DEPARTMENTS, f.department, 'Select dept') + '</select></div>' +
       '<div><label>Your Name <span class="req"></span></label>' +
         '<input class="cc-input" type="text" placeholder="Your name" value="' + attr(f.logged_by) + '" oninput="QCMODE.setIr(\'logged_by\', this.value)"></div>' +
+      '<div><label>Technician (worked on product) <span class="req"></span></label>' +
+        '<input class="cc-input" type="text" placeholder="Technician name" value="' + attr(f.technician) + '" oninput="QCMODE.setIr(\'technician\', this.value)"></div>' +
+      '<div><label>Step where issue occurred' + (state.irSteps.length ? ' <span class="req"></span>' : '') + '</label>' +
+        '<select class="cc-input"' + (state.irSteps.length ? '' : ' disabled') + ' onchange="QCMODE.setIr(\'issue_step\', this.value)">' + stepOptions + '</select></div>' +
       '<div><label>Ship Date <span class="req"></span></label>' +
         '<input class="cc-input" type="date" value="' + attr(f.ship_date) + '" oninput="QCMODE.setIr(\'ship_date\', this.value)"></div>' +
       '<div><label>Doctor Due Date <span class="req"></span></label>' +
         '<input class="cc-input" type="date" value="' + attr(f.dr_due_date) + '" oninput="QCMODE.setIr(\'dr_due_date\', this.value)"></div>' +
+      '<div><label>Received Date <span class="qc-auto">auto</span></label>' +
+        '<input class="cc-input" type="date" value="' + attr(f.received_date) + '" readonly></div>' +
+      '<div><label>Start Date <span class="qc-auto">auto</span></label>' +
+        '<input class="cc-input" type="date" value="' + attr(f.start_date) + '" readonly></div>' +
+      '<div><label>Time in Lab <span class="qc-auto">auto</span></label>' +
+        '<input class="cc-input" type="text" value="' + attr(tilStr) + '" placeholder="—" readonly></div>' +
+      '<div><label>Total Invoice <span class="qc-auto">auto</span></label>' +
+        '<input class="cc-input" type="text" value="' + attr(invStr) + '" placeholder="—" readonly></div>' +
       '<div class="full"><label>Description of Issue <span class="req"></span></label>' +
         '<textarea class="cc-input" rows="3" placeholder="Describe what went wrong and what needs to be fixed…" oninput="QCMODE.setIr(\'description\', this.value)">' + esc(f.description) + '</textarea></div>' +
       '<div class="full"><label>Need Technical Expert Assistance? <span class="req"></span></label>' +
@@ -289,7 +348,7 @@ async function refreshMrb() {
 }
 
 // ── handlers (window.QCMODE) ────────────────────────────────────────
-function setTab(tab) { state.activeTab = tab; render(); ensureRecentLoaded(); }
+function setTab(tab) { if (!canSeeTab(tab)) return; state.activeTab = tab; render(); ensureRecentLoaded(); }
 function setStep(step) { state.step = step; render(); }
 function setQc(k, v) {
   state.qc[k] = v;
@@ -360,10 +419,44 @@ function resetQc() {
 
 function setIr(k, v) { state.ir[k] = v; }
 function setNeedsExpert(val) { state.needsExpert = val; render(); }
+
+// Auto-populate the Internal Remake form from the case number (fired on change/blur of the case
+// field). Fills ship/due/received/start/time-in-lab/invoice and loads the case's steps for the
+// "step where issue occurred" dropdown. No-ops if the case is unchanged.
+async function lookupIrCase() {
+  const cn = (state.ir.case_number || '').trim();
+  if (!cn) { state.irSteps = []; state.irLookupStatus = ''; state.irLookupCase = ''; render(); return; }
+  if (cn === state.irLookupCase && state.irLookupStatus === 'found') return;  // already loaded
+  state.irLookupLoading = true; state.irLookupStatus = ''; render();
+  try {
+    const res = await Data.lookupCaseForRemake(cn);
+    if (res && res.found) {
+      const f = state.ir;
+      if (res.ship_date)   f.ship_date   = res.ship_date;
+      if (res.dr_due_date) f.dr_due_date = res.dr_due_date;
+      f.received_date    = res.received_date || '';
+      f.start_date       = res.start_date || '';
+      f.time_in_lab_days = (res.time_in_lab_days ?? null);
+      f.total_invoice    = (res.total_invoice ?? null);
+      f.issue_step       = '';                       // make them re-pick for the new case
+      state.irSteps      = Array.isArray(res.steps) ? res.steps : [];
+      state.irLookupStatus = 'found';
+    } else {
+      state.irSteps = [];
+      state.irLookupStatus = 'notfound';
+    }
+    state.irLookupCase = cn;
+  } catch (e) {
+    state.irLookupStatus = 'error';
+  } finally {
+    state.irLookupLoading = false; render();
+  }
+}
 async function submitIr() {
   const f = state.ir;
-  const valid = f.case_number.trim() && f.department && f.logged_by.trim() &&
-    f.ship_date && f.dr_due_date && f.description.trim() && state.needsExpert !== null;
+  const stepRequiredOk = state.irSteps.length === 0 || !!f.issue_step;
+  const valid = f.case_number.trim() && f.department && f.logged_by.trim() && f.technician.trim() &&
+    f.ship_date && f.dr_due_date && f.description.trim() && stepRequiredOk && state.needsExpert !== null;
   if (!valid || state.irSaving) return;
   state.irSaving = true; render();
   try {
@@ -373,8 +466,14 @@ async function submitIr() {
       case_number: f.case_number.trim(),
       department: f.department,
       logged_by: f.logged_by.trim(),
+      technician: f.technician.trim(),
+      issue_step: f.issue_step || null,
       ship_date: f.ship_date,
       dr_due_date: f.dr_due_date,
+      received_date: f.received_date || null,
+      start_date: f.start_date || null,
+      time_in_lab_days: (f.time_in_lab_days ?? null),
+      total_invoice: (f.total_invoice ?? null),
       description: f.description.trim(),
       needs_expert: state.needsExpert,
     });
@@ -401,12 +500,16 @@ async function submitIr() {
     state.irSaving = false; render();
   }
 }
-function resetIr() { state.ir = { ...EMPTY_IR }; state.needsExpert = null; state.irDone = false; state.irSaving = false; render(); }
+function resetIr() {
+  state.ir = { ...EMPTY_IR }; state.needsExpert = null; state.irDone = false; state.irSaving = false;
+  state.irSteps = []; state.irLookupCase = ''; state.irLookupStatus = ''; state.irLookupLoading = false;
+  render();
+}
 
 const QCMODE = {
   renderQcMode,
   setTab, setStep, setQc, setTeam, setDrDue, submitQc, stage, resetQc,
-  setIr, setNeedsExpert, submitIr, resetIr,
+  setIr, setNeedsExpert, submitIr, resetIr, lookupIrCase,
 };
 if (typeof window !== 'undefined') window.QCMODE = QCMODE;
 export default QCMODE;

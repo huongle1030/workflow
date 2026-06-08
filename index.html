@@ -1551,7 +1551,8 @@
   }
   #outbound-sort,
   #outbound-filter,
-  #outbound-partner {
+  #outbound-partner,
+  #approval-sort {
     padding: 7px 32px 7px 14px;
     border: 1px solid var(--slate-light);
     border-radius: 999px;
@@ -1574,10 +1575,12 @@
   }
   #outbound-sort:hover,
   #outbound-filter:hover,
-  #outbound-partner:hover { border-color: var(--blue-soft); }
+  #outbound-partner:hover,
+  #approval-sort:hover { border-color: var(--blue-soft); }
   #outbound-sort:focus,
   #outbound-filter:focus,
-  #outbound-partner:focus {
+  #outbound-partner:focus,
+  #approval-sort:focus {
     outline: none; border-color: var(--blue);
     box-shadow: 0 0 0 3px rgba(24, 130, 199, 0.1);
   }
@@ -1640,6 +1643,11 @@
   /* The Type (reason) filter sits at the far right, so the default 260px menu runs off
      the edge. Its labels are short — narrow this menu only, keeping its left edge anchored. */
   #outbound-reason-dd .custom-dd-menu { min-width: 0; width: 200px; }
+  /* Hold-reason labels are long ("E-AOX- Hold for Doctor Design Approval"); give this menu room
+     and let the option text wrap instead of overflowing. */
+  #approval-hold-dd .custom-dd-menu { width: 360px; max-width: 92vw; max-height: 360px; overflow-y: auto; }
+  #approval-hold-dd .custom-dd-option { align-items: flex-start; }
+  #approval-hold-dd .custom-dd-option span:first-child { white-space: normal; line-height: 1.35; }
   .custom-dd-option {
     display: flex; justify-content: space-between; align-items: center;
     padding: 8px 12px;
@@ -1672,6 +1680,54 @@
     font-family: 'Montserrat', sans-serif;
     letter-spacing: 0.5px;
   }
+
+  /* Pending Outbound — Sonnet parse UI bits
+     Red asterisk to the left of the Pan Number when a case has no exocad viewer link. */
+  .nolink-asterisk {
+    color: var(--red, #c0392b);
+    font-weight: 800;
+    font-size: 16px;
+    line-height: 1;
+    margin-right: 4px;
+    vertical-align: top;
+  }
+  /* "Call for now" time-sensitive flag (next follow-up is escalation/phone). */
+  .callnow-chip {
+    display: inline-block;
+    background: var(--red, #c0392b); color: #fff;
+    font-size: 11px; font-weight: 700;
+    font-family: 'Montserrat', sans-serif;
+    letter-spacing: 0.3px;
+    padding: 2px 9px; border-radius: 999px;
+    margin-left: 6px; vertical-align: middle;
+  }
+  /* Right-hand reason stamp when the open reason is not design_approval. */
+  .stamp.reason-stamp { background: var(--pale); color: var(--navy); }
+  /* Expanded: per-reason attempt breakdown (all 7 reasons). */
+  .reason-breakdown {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    padding: 10px 0 12px; margin-bottom: 4px;
+    border-bottom: 1px dashed var(--slate-light);
+  }
+  .reason-breakdown-label {
+    width: 100%;
+    font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--slate); font-family: 'Montserrat', sans-serif; margin-bottom: 2px;
+  }
+  .reason-attempt {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: var(--slate);
+    background: var(--bg, #f5f6f8);
+    border: 1px solid var(--slate-light);
+    border-radius: 999px; padding: 2px 10px;
+    font-family: 'Montserrat', sans-serif;
+  }
+  .reason-attempt.nonzero { color: var(--navy); border-color: var(--blue-soft); }
+  .reason-attempt.open {
+    background: var(--pale); color: var(--navy);
+    border-color: var(--blue); font-weight: 700;
+  }
+  .reason-attempt strong { font-weight: 800; }
   /* Revenue chip on each item card */
   .revenue-chip {
     display: inline-block;
@@ -3702,6 +3758,42 @@
 
 <div class="panel hidden" id="panel-approval">
   <h2>Pending Outbound</h2>
+  <div class="outbound-toolbar" id="approval-toolbar">
+    <div class="toolbar-left">
+      <span class="toolbar-label">Customer</span>
+      <div class="custom-dd" id="approval-customer-dd">
+        <button type="button" class="custom-dd-btn" onclick="toggleApprovalCustomerDd(event)">
+          <span id="approval-customer-label">All customers</span>
+          <span class="chip-count" id="approval-customer-count">0</span>
+        </button>
+        <div class="custom-dd-menu" id="approval-customer-menu" role="listbox"></div>
+      </div>
+      <span class="toolbar-label">Hold reason</span>
+      <div class="custom-dd" id="approval-hold-dd">
+        <button type="button" class="custom-dd-btn" onclick="toggleApprovalHoldDd(event)">
+          <span id="approval-hold-label">All hold reasons</span>
+          <span class="chip-count" id="approval-hold-count">0</span>
+        </button>
+        <div class="custom-dd-menu" id="approval-hold-menu" role="listbox"></div>
+      </div>
+      <span class="toolbar-label">Exocad link</span>
+      <div class="custom-dd" id="approval-link-dd">
+        <button type="button" class="custom-dd-btn" onclick="toggleApprovalLinkDd(event)">
+          <span id="approval-link-label">All links</span>
+          <span class="chip-count" id="approval-link-count">0</span>
+        </button>
+        <div class="custom-dd-menu" id="approval-link-menu" role="listbox"></div>
+      </div>
+    </div>
+    <div class="toolbar-right" id="approval-revenue-wrap">
+      <span class="toolbar-label">Revenue</span>
+      <select id="approval-sort" onchange="setApprovalSort(this.value)">
+        <option value="">All revenue</option>
+        <option value="revenue_desc">Highest → lowest</option>
+        <option value="revenue_asc">Lowest → highest</option>
+      </select>
+    </div>
+  </div>
   <div class="outbound-count" id="approval-count"></div>
   <div id="list-approval"><div class="loading">Loading…</div></div>
 </div>
@@ -3957,8 +4049,8 @@ Clean margins are needed before we can proceed with the design"></textarea>
       <div class="value" id="cc-stat-total">–</div>
     </div>
     <div class="cc-stat-card">
-      <div class="label">Today</div>
-      <div class="value" id="cc-stat-today">–</div>
+      <div class="label">Approved</div>
+      <div class="value" id="cc-stat-approved">–</div>
     </div>
     <div class="cc-stat-card">
       <div class="label">Top Action</div>

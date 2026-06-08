@@ -122,3 +122,16 @@
 .cc-action-badge.qc-nextday  { background: #E6F1FB; color: #185FA5; border-color: #85B7EB; }
 .cc-action-badge.qc-remake   { background: #FCEBEB; color: #A32D2D; border-color: #F09595; }
 .cc-action-badge.qc-internal { background: #EEEDFE; color: #534AB7; border-color: #AFA9EC; }
+
+/* Internal Remake — case-number auto-lookup feedback + auto-filled field badge */
+.qc-lookup-note { margin-top: 6px; font-size: 12px; line-height: 1.3; }
+.qc-lookup-note.loading { color: var(--slate); }
+.qc-lookup-note.ok      { color: #3B6D11; }
+.qc-lookup-note.warn    { color: #A32D2D; }
+.qc-root .cc-form-card label .qc-auto {
+  font-weight: 600; font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--slate); background: var(--bg, #f0f2f5);
+  border: 1px solid var(--slate-light, #cdd5dd); border-radius: 999px;
+  padding: 1px 6px; margin-left: 6px;
+}
+.qc-root .cc-input[readonly] { background: var(--bg, #f5f6f8); color: var(--navy); cursor: default; }

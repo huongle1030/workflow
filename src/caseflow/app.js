@@ -15,7 +15,20 @@ import { DCL_SCHEMAS } from './schemas.js';
 import { getDcl, dclEsc, dclAttr, dclAutoPopulate, dclVisibility } from './dcl.js';
 import { exportZip, buildAndDownloadZip, fillDesignPdf } from './export.js';
 import * as Data from './data.js';
+import { getCurrentUser, getCurrentEmployee } from '../auth.js';
 import './styles.css';
+
+// Logged-in Microsoft account's display name — used to pre-fill the Data Entry "Tech name".
+// Prefer the Azure/Microsoft display name from the session; fall back to the employees row name,
+// then the email local-part.
+function currentTechName() {
+  const u = getCurrentUser();
+  const fromMs = u?.user_metadata?.full_name || u?.user_metadata?.name;
+  if (fromMs) return fromMs;
+  const emp = getCurrentEmployee();
+  if (emp?.name) return emp.name;
+  return (u?.email || '').split('@')[0] || '';
+}
 
 // ── module state ────────────────────────────────────────────────────
 let cases = [];
@@ -388,6 +401,9 @@ function buildTRISection(a) { if (a.cat !== 'TRI') return ''; const barSet = isS
 function buildAox(caseId) {
   const a = getA(caseId); const c = getC(caseId);
   if (!a.date) a.date = deToday();
+  // Pre-fill the tech name from the signed-in Microsoft account (only when empty, so a manually
+  // entered/edited name is never overwritten).
+  if (!a.tech) a.tech = currentTechName();
   const _ct = a.crm ? 1 : 0;
   if (a.cat === 'CC' && !isSet(a.ccType)) a.ccType = _ct;
   if (a.cat === 'SKD' && !isSet(a.skdType)) a.skdType = _ct;
