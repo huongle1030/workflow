@@ -56,6 +56,12 @@
 .cf-root .case-row:last-child { border-bottom:none }
 .cf-root .case-row:hover { background:var(--color-background-secondary) }
 .cf-root .td { padding:11px 8px;font-size:13px;display:flex;align-items:center }
+/* Complete tab: extra Partner + Completed (PST) columns → its own 8-col grid */
+.cf-root .cases-table-complete .table-header,
+.cf-root .cases-table-complete .case-row { grid-template-columns:100px minmax(120px,1fr) 130px 116px 60px 116px 116px 205px }
+.cf-root .cf-complete-filters { display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:12px }
+.cf-root .cf-cf-group { display:flex;align-items:center;gap:8px;flex-wrap:wrap }
+.cf-root .cf-date-input { padding:6px 8px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);font-size:12px;color:var(--color-text-primary);font-family:inherit }
 .cf-root .case-id { font-family:var(--font-mono);font-size:12px;color:var(--color-text-secondary) }
 .cf-root .stage-badge { display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:500 }
 .cf-root .badge-entry { background:#E9F5FD;color:#136AA3 }
