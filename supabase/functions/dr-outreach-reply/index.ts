@@ -48,11 +48,38 @@ function mailboxFromResource(resource: string | undefined | null): string {
 async function fetchMessage(userId: string, messageId: string) {
   const token = await graphToken();
   const res = await fetch(
-    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/messages/${messageId}?$select=id,conversationId,subject,from,bodyPreview,body,internetMessageId,toRecipients,ccRecipients,receivedDateTime`,
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/messages/${messageId}?$select=id,conversationId,subject,from,bodyPreview,body,internetMessageId,toRecipients,ccRecipients,receivedDateTime,hasAttachments`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!res.ok) throw new Error(`Graph fetch message failed: ${res.status} ${await res.text()}`);
   return res.json();
+}
+
+// Lightweight attachment metadata (name/contentType/size) for an inbound message — NOT the
+// file bytes. The scan-submission classifier keys off whether a real patient-scan file is
+// attached (a file named after the case/patient), and the Scan Submission card shows the
+// attachment, so we capture this at ingest where the mailbox is known. Inline images (logos,
+// signature graphics) are dropped — they aren't submissions. Returns [] on any failure so a
+// flaky Graph call never blocks reply ingestion.
+async function fetchAttachments(userId: string, messageId: string): Promise<{ name: string; contentType: string | null; size: number | null }[]> {
+  try {
+    const token = await graphToken();
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/messages/${messageId}/attachments?$select=name,contentType,size,isInline`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return [];
+    const j = await res.json();
+    return (j.value ?? [])
+      .filter((a: any) => a?.isInline !== true && a?.name)
+      .map((a: any) => ({
+        name: String(a.name),
+        contentType: a.contentType ?? null,
+        size: typeof a.size === "number" ? a.size : null,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 async function graphSendMail(to: string, subject: string, html: string, caseNumber: string) {
@@ -222,6 +249,13 @@ serve(async (req) => {
           .eq("id", queueId).eq("status", "open");
       }
 
+      // Attachment metadata (names only) — captured here because this is the only place
+      // that knows which mailbox the message lives in. Drives the scan-submission classifier
+      // and the Scan Submission card. Only call Graph when the message actually has attachments.
+      const attachments = msg.hasAttachments
+        ? await fetchAttachments(mailbox, note.resourceData.id)
+        : [];
+
       const replyOnly = stripQuotedReply(text);
       const cls = await classifyReply(subject, replyOnly);
 
@@ -239,6 +273,7 @@ serve(async (req) => {
         subject,
         body_text: text.slice(0, 50_000),
         body_html: html.slice(0, 200_000),
+        attachments,
         ai_classification: cls.classification,
         ai_confidence: cls.confidence,
         ai_summary: cls.summary,
