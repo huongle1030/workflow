@@ -16,6 +16,7 @@ import { getDcl, dclEsc, dclAttr, dclAutoPopulate, dclVisibility } from './dcl.j
 import { exportZip, buildAndDownloadZip, fillDesignPdf } from './export.js';
 import * as Data from './data.js';
 import { getCurrentUser, getCurrentEmployee } from '../auth.js';
+import { renderCode39 } from '../barcode.js';
 import './styles.css';
 
 // Logged-in Microsoft account's display name — used to pre-fill the Data Entry "Tech name".
@@ -595,6 +596,18 @@ function designPhaseRank(stage) { return { 'Design Check': 0, 'Outsourcing': 1, 
 // =====================================================================
 // Case detail (stage-driven) — ported, returns an HTML string
 // =====================================================================
+// Case-number barcode panel — Code 39, scan-interchangeable with the ABS work
+// ticket. Sits at the TOP of the right column (above the Design Checklist / step
+// panel, whatever it is for the stage) in the Case Review, Scanning, and Design
+// Team detail views — every sub-tab, any open case. The <svg> is painted in
+// afterDetailRender() once it is in the DOM. See ../barcode.js.
+const BARCODE_MODES = ['casereview', 'scanning', 'design'];
+function barcodePanelHtml(c) {
+  if (!BARCODE_MODES.includes(selectedMode) || !c.caseNum) return '';
+  return `<div class="panel cf-barcode-panel"><div class="panel-title"><i class="ti ti-barcode"></i> Case Barcode</div>
+    <div class="cf-barcode-wrap"><svg id="cf-barcode" aria-label="Case number barcode (Code 39)"></svg></div></div>`;
+}
+
 function renderCaseDetail(c) {
   const si = stageN(c.stage); const ps = ['Data Entry', 'Review', 'Design', 'Outsource', 'QC', 'Complete'];
   const prog = `<div class="progress-track" role="list">${ps.map((s, i) => `<div class="prog-step" role="listitem"><div class="prog-node"><div class="prog-circle${i < si ? ' done' : i === si ? ' active' : ''}">${i < si ? '<i class="ti ti-check" style="font-size:12px"></i>' : (i + 1)}</div><span class="prog-label${i === si ? ' active' : ''}">${s}</span></div>${i < ps.length - 1 ? `<div class="prog-connector${i < si ? ' done' : ''}"></div>` : ''}</div>`).join('')}${c.stage === 'Scanning' ? `<div style="margin-left:8px;padding:3px 10px;background:#F4F0E4;border-radius:10px;font-size:11px;color:#6B5E2F;font-weight:500;white-space:nowrap"><i class="ti ti-scan" style="font-size:11px;margin-right:4px"></i>Scanning</div>` : ''}</div>`;
@@ -783,9 +796,22 @@ function renderCaseDetail(c) {
     ${leftReviewSel}
     ${(!isDesign && c.reviewFiles.length) ? `<div class="panel"><div class="panel-title"><i class="ti ti-paperclip"></i> Design files</div><div class="file-list">${rfH}</div></div>` : ''}
     ${c.scanFiles && c.scanFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#6B5E2F"></i> Scan files</div><div class="file-list">${sfH}</div></div>` : ''}
-  </div><div>${sp}</div></div>`;
+  </div><div>${barcodePanelHtml(c)}${sp}</div></div>`;
 }
-function afterDetailRender(c) { qcSel = null; adjSel = null; }
+function afterDetailRender(c) {
+  qcSel = null; adjSel = null;
+  // Paint the Code 39 barcode now that its <svg> is in the DOM. Hide the panel
+  // (rather than throw) if JsBarcode can't encode the value, so a barcode hiccup
+  // never blanks the case detail.
+  const svg = document.getElementById('cf-barcode');
+  if (svg && c.caseNum) {
+    try { renderCode39(svg, c.caseNum); }
+    catch (e) {
+      const panel = svg.closest('.cf-barcode-panel');
+      if (panel) panel.style.display = 'none';
+    }
+  }
+}
 
 // ── transitions / actions (ported) ──────────────────────────────────
 function passToDesign(id) { saveReviewNotes(id); advanceStage(id, 'Design Check', 'Files reviewed — passed to Design team', 'Case Review Team'); }

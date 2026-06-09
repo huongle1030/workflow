@@ -4,6 +4,9 @@
 import './auth.css';
 import { initAuth, getCurrentEmployee, signOut as authSignOut, getAccessToken } from './auth.js';
 import { can, CAPABILITIES, getCurrentRole, ROLE_LABELS, ROLES } from './permissions.js';
+// Code 39 barcode generator for the Case Lookup tab (scan-interchangeable with
+// the ABS work-ticket barcode). Client-side only, nothing persisted. See barcode.js.
+import { renderCode39, downloadCode39Png, downloadCode39Svg } from './barcode.js';
 // CaseFlow production modes (Data Entry / Case Review / Scanning / Design Team).
 // Importing for side effects: sets window.CF and bundles the caseflow module + CSS.
 import { initCaseFlow } from './caseflow/app.js';
@@ -4066,6 +4069,60 @@ function caseLookupLegendHtml(muted = false) {
     </div>`;
 }
 
+// Case-basics bar shown under the counts row. Extracted so both the normal
+// timeline render and the no-communications-yet render share one source.
+function caseInfoBarHtml(caseInfo) {
+  const ci = caseInfo || {};
+  const dueDate = ci.doctor_due_date ? new Date(ci.doctor_due_date + 'T12:00:00').toLocaleDateString() : '–';
+  return `
+    <div class="lookup-case-info">
+      <div><div class="ci-label">Patient</div><div class="ci-value">${esc(ci.patient_name || '–')}</div></div>
+      <div><div class="ci-label">Doctor</div><div class="ci-value">${esc(ci.dr_last_name || '–')}</div></div>
+      <div><div class="ci-label">Practice</div><div class="ci-value">${esc(ci.practice_name || '–')}</div></div>
+      <div><div class="ci-label">Current Step</div><div class="ci-value">${esc(ci.current_step || '–')}</div></div>
+      <div><div class="ci-label">Doctor Due</div><div class="ci-value">${esc(dueDate)}</div></div>
+      <div><div class="ci-label">Case Status</div><div class="ci-value">${esc(ci.case_status || '–')}</div></div>
+    </div>`;
+}
+
+// Static markup for the Code 39 barcode strip (the <svg> is painted after the
+// surrounding innerHTML is set — see paintCaseBarcode).
+function caseBarcodeStripHtml() {
+  return `
+    <div class="lookup-barcode" id="lookup-barcode-strip">
+      <svg id="lookup-barcode" class="lookup-barcode-svg" aria-label="Case number barcode (Code 39)"></svg>
+      <div class="lookup-barcode-actions">
+        <button class="act slate" onclick="downloadCaseBarcode('png')">Download PNG</button>
+        <button class="act slate" onclick="downloadCaseBarcode('svg')">Download SVG</button>
+      </div>
+    </div>`;
+}
+
+// Paint the on-screen barcode for the currently loaded case. Hides the strip
+// (rather than throwing) if JsBarcode can't encode the value, so a barcode
+// hiccup never blanks the whole timeline.
+function paintCaseBarcode() {
+  const svg = document.getElementById('lookup-barcode');
+  const cn = caseLookupState.caseNumber;
+  if (!svg || !cn) return;
+  try {
+    renderCode39(svg, cn);
+  } catch (e) {
+    console.warn('[barcode] could not render Code 39 for', cn, e);
+    const strip = document.getElementById('lookup-barcode-strip');
+    if (strip) strip.style.display = 'none';
+  }
+}
+
+// Inline-onclick handler for the Download PNG/SVG buttons. Reads
+// caseLookupState so it always acts on the loaded case (no stale closure).
+function downloadCaseBarcode(fmt) {
+  const cn = caseLookupState.caseNumber;
+  if (!cn) { toast('Look up a case first', 'err'); return; }
+  if (fmt === 'svg') downloadCode39Svg(cn);
+  else downloadCode39Png(cn);
+}
+
 async function lookupCase() {
   const cn = document.getElementById('lookup-input').value.trim();
   if (!cn) { toast('Enter a case number', 'err'); return; }
@@ -4118,8 +4175,22 @@ async function lookupCase() {
   caseLookupState.summary = '';
 
   if (!rows || rows.length === 0) {
-    document.getElementById('lookup-result').innerHTML =
-      '<div class="empty"><strong>No events for case ' + esc(cn) + '.</strong><br/>Check the case number, or this case may have no Case Notes / attempts / replies yet.</div>';
+    if (caseInfo) {
+      // The case exists in case-basics but has no logged communications yet.
+      // Still show a minimal header + the scannable barcode (user choice:
+      // a barcode for every real case, skipped only for unknown numbers).
+      document.getElementById('lookup-result').innerHTML =
+        `<div class="lookup-header">
+          <div><div class="label">Case</div><div class="value">${esc(cn)}</div></div>
+        </div>
+        ${caseInfoBarHtml(caseInfo)}
+        ${caseBarcodeStripHtml()}
+        <div class="empty">No communications logged yet for case ${esc(cn)}.</div>`;
+      paintCaseBarcode();
+    } else {
+      document.getElementById('lookup-result').innerHTML =
+        '<div class="empty"><strong>No events for case ' + esc(cn) + '.</strong><br/>Check the case number, or this case may have no Case Notes / attempts / replies yet.</div>';
+    }
     return;
   }
 
@@ -4136,17 +4207,7 @@ async function lookupCase() {
   }
 
   // Case info bar — pulls from caseInfo if we got it, falls back to "–"
-  const ci = caseInfo || {};
-  const dueDate = ci.doctor_due_date ? new Date(ci.doctor_due_date + 'T12:00:00').toLocaleDateString() : '–';
-  const caseInfoBar = `
-    <div class="lookup-case-info">
-      <div><div class="ci-label">Patient</div><div class="ci-value">${esc(ci.patient_name || '–')}</div></div>
-      <div><div class="ci-label">Doctor</div><div class="ci-value">${esc(ci.dr_last_name || '–')}</div></div>
-      <div><div class="ci-label">Practice</div><div class="ci-value">${esc(ci.practice_name || '–')}</div></div>
-      <div><div class="ci-label">Current Step</div><div class="ci-value">${esc(ci.current_step || '–')}</div></div>
-      <div><div class="ci-label">Doctor Due</div><div class="ci-value">${esc(dueDate)}</div></div>
-      <div><div class="ci-label">Case Status</div><div class="ci-value">${esc(ci.case_status || '–')}</div></div>
-    </div>`;
+  const caseInfoBar = caseInfoBarHtml(caseInfo);
 
   const header = `
     <div class="lookup-header">
@@ -4160,6 +4221,7 @@ async function lookupCase() {
       </div>
     </div>
     ${caseInfoBar}
+    ${caseBarcodeStripHtml()}
     <div id="case-summary-box" class="case-summary-box" style="display:none;">
       <div class="case-summary-label">AI Summary</div>
       <div id="case-summary-text"></div>
@@ -4215,6 +4277,7 @@ async function lookupCase() {
 
   document.getElementById('lookup-result').innerHTML =
     header + '<div class="timeline">' + events + '</div>' + caseLookupLegendHtml(true);
+  paintCaseBarcode();
 }
 
 // Build a plain-text transcript of the case's communications for AI input
@@ -6222,7 +6285,7 @@ Object.assign(window, {
   exportReschedule, setAuditWindow,
   // Outreach panels
   lookupCase, gotoCaseLookup, generateCaseSummary, printCaseLookup,
-  onCaseLookupInput, pickCaseSuggestion,
+  onCaseLookupInput, pickCaseSuggestion, downloadCaseBarcode,
   submitFeedback, submitRequest,
   // Case Coordination
   setCaseTab, submitLog, exportFPY, deleteLogEntry,
