@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",
+    "jsbarcode": "^3.12.3",
     "pdf-lib": "^1.17.1"
   }
 }
