@@ -56,8 +56,9 @@ function applyFilters(list, f) {
     const days = f.due === 'today' ? 0 : f.due === '3d' ? 3 : f.due === '1w' ? 7 : 14;
     horizon = addDaysStr(today, days);
   }
-  const holdMin = f.hold === 'all' ? 0 : f.hold === '24' ? 1 : f.hold === '48' ? 2 : 3;
+  const holdMin = (f.hold === 'all' || f.hold === 'none') ? 0 : f.hold === '24' ? 1 : f.hold === '48' ? 2 : 3;
   return list.filter(c => {
+    if (f.hold === 'none' && c.isOnHold) return false;
     if (holdMin > 0 && !(c.isOnHold && c.holdDays >= holdMin)) return false;
     if (horizon && !(c.dueDate && c.dueDate <= horizon)) return false;
     if (f.step !== 'all' && c.stepConsolidated !== f.step) return false;
@@ -144,7 +145,7 @@ function filterBarHtml(f, all) {
   const buOpts = distinct(all, 'businessUnit').map(b => [b, buLabel(b)]).sort((a, b) => a[1].localeCompare(b[1]));
   const matOpts = distinct(all, 'material').map(m => [m, m]);
   return `<div class="nest-filters">
-    ${sel('hold', f.hold, [['all', 'Any hold time'], ['24', 'On hold ≥ 24h'], ['48', 'On hold ≥ 48h'], ['72', 'On hold ≥ 72h']])}
+    ${sel('hold', f.hold, [['all', 'Any hold time'], ['none', 'Not on hold'], ['24', 'On hold ≥ 24h'], ['48', 'On hold ≥ 48h'], ['72', 'On hold ≥ 72h']])}
     ${sel('due', f.due, [['all', 'Any due date'], ['today', 'Due today'], ['3d', 'Due in 3 days'], ['1w', 'Due in 1 week'], ['2w', 'Due in 2 weeks']])}
     ${sel('step', f.step, [['all', 'All design steps'], ...stepOpts])}
     ${sel('bu', f.bu, [['all', 'All business units'], ...buOpts])}
