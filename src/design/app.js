@@ -167,6 +167,7 @@ function tileHtml(c) {
     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();DESIGN.openCase('${attr(c.caseNumber)}')}"
     title="${attr(c.currentStep + ' · ' + (c.product || ''))}">
     <div class="nest-tile-pan">${esc(pan)}</div>
+    ${c.patientName ? `<div class="nest-tile-patient">${esc(c.patientName)}</div>` : ''}
     <div class="nest-tile-case">Case ${esc(c.caseNumber)}</div>
     <div class="nest-tile-due">${c.dueDate ? 'Due ' + fmtDate(c.dueDate) : 'No due date'}</div>
     ${c.stepConsolidated ? `<div class="nest-tile-step">${esc(c.stepConsolidated)}</div>` : ''}
@@ -196,6 +197,7 @@ function modalHtml(c) {
         ${badges.length ? `<div class="nest-tile-badges">${badges.join('')}</div>` : ''}
       </div>
       <div class="nest-modal-body">
+        ${row('Patient', esc(c.patientName || '—'))}
         ${row('Product', esc(c.product || '—'))}
         ${row('Material', esc(c.material || '—'))}
         ${row('Doctor due date', c.dueDate ? fmtDate(c.dueDate) : '—')}

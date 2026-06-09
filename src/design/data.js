@@ -32,6 +32,7 @@ function rowToCase(r) {
   return {
     caseNumber:       r.case_number || '',
     panNumber:        r.pan_number,
+    patientName:      r.patient_name || '',
     dueDate:          r.doctor_due_date_only || (r.doctor_due_date ? String(r.doctor_due_date).slice(0, 10) : null),
     receivedDate:     r.received_date || null,
     businessUnit:     r.business_unit || '',
