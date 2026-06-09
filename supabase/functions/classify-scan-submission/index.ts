@@ -5,9 +5,15 @@
 // lands in the Pending Outbound tab for a coordinator to approve. It never sends — the
 // existing approve_attempt → Graph-sender path does that after human review.
 //
-// Patterned on suggest-case-number (stripQuotedReply, Claude Haiku, batched cron tick,
-// idempotent scan_ack_at stamp). Env reuses SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-// ANTHROPIC_API_KEY. Driven by a pg_cron tick posting {"batch":25} every 10 min.
+// Patterned on suggest-case-number (stripQuotedReply, batched cron tick, idempotent
+// scan_ack_at stamp). Runs on Claude Sonnet and keys off the email's ATTACHMENT list:
+// a scan submission must actually attach a patient scan (a file named after the case or
+// patient). Env reuses SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY.
+// Driven by a pg_cron tick posting {"batch":25} every 10 min.
+//
+// Attachment metadata (dr_outreach_replies.attachments) is captured at ingest by the
+// dr-outreach-reply webhook. Pre-deploy rows have attachments = NULL (never captured);
+// only rows received after that webhook ships carry a real attachment list.
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -18,7 +24,7 @@ const ANTHROPIC_API_KEY = (Deno.env.get("ANTHROPIC_API_KEY")
   || Deno.env.get("anthropic_api_key")
   || Deno.env.get("anthropic_key_api"))!;
 
-const MODEL = "claude-haiku-4-5-20251001";
+const MODEL = "claude-sonnet-4-6";
 const CONFIDENCE_THRESHOLD = 0.7;   // tune after reviewing a sample
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -46,20 +52,35 @@ function stripQuotedReply(text: string): string {
   return trimmed.length > 0 ? trimmed : text.trim();
 }
 
-const SYSTEM = `You triage inbound emails to a dental lab. Decide whether THIS email is a
-dental provider (doctor / office) SUBMITTING a patient's iOS / intraoral scan — i.e. sending
-in a new scan/STL/digital impression so the lab can start or set up a case.
+const SYSTEM = `You triage inbound emails to a dental lab. Decide whether THIS email is a dental
+provider (doctor / office) submitting a patient's iOS / intraoral scan by EMAILING the scan file(s)
+directly to the lab — i.e. the patient's actual scan is attached to THIS email.
 
-Treat as a scan submission (is_scan_submission = true): an email whose purpose is to hand off
-a patient scan / intraoral scan / digital impression / STL files for a new or existing patient,
-typically with the files attached or shared via a link.
+Background: scans are SUPPOSED to be submitted through 3Shape (the proper portal). When a provider
+uses 3Shape the scan is already handled and there is nothing for us to act on. Some providers skip
+3Shape and just attach the scan file to an email instead — THOSE are the submissions we must
+respond to.
 
-Treat as NOT a scan submission (false): design-approval replies, modification requests, pricing
-or product questions, scheduling, shipping/status questions, general correspondence, or anything
-that isn't the provider sending in a scan.
+is_scan_submission = true ONLY IF the email delivers the patient's actual scan BY EMAIL: it
+attaches the scan file(s) itself — a scan / STL / PLY / DCM / intraoral / digital-impression file,
+or a file/zip named after the case (e.g. a case number) or the patient — and is handing that scan
+off to the lab.
+
+is_scan_submission = false IF ANY of these hold:
+- The email says the scan was submitted / sent / uploaded through 3Shape (or another portal such as
+  Trios). The scan went through the proper channel, so there is nothing to act on here — even if the
+  email attaches supplementary files like a lab Rx or clinical photos.
+- The email has NO attachments, or its only attachments are clearly NOT the scan (inline signature
+  logos, marketing PDFs, calendar invites, a stray file with no case/patient connection).
+- It is a design-approval reply, modification request, pricing/product question, scheduling or
+  shipping/status question, or general correspondence.
+
+Edge case: if the provider says 3Shape failed / wouldn't work and is therefore attaching the scan
+file to the email instead, that IS a submission — the deciding factor is whether the actual scan
+file is attached and being delivered by email.
 
 Reply with ONLY a strict JSON object (no prose, no code fence):
-{"is_scan_submission": true|false, "confidence": 0.0-1.0, "reasoning": "<one sentence>"}`;
+{"is_scan_submission": true|false, "confidence": 0.0-1.0, "reasoning": "<one sentence, name the deciding scan attachment or the 3Shape/channel mention>"}`;
 
 interface Verdict {
   is_scan_submission: boolean;
@@ -67,10 +88,27 @@ interface Verdict {
   reasoning: string;
 }
 
-async function classify(reply: { subject: string; body_text: string; from_email: string }): Promise<Verdict | null> {
+// Render the captured attachment list for the prompt. attachments is jsonb captured at ingest:
+// [{name, contentType, size}]. NULL = never captured (pre-deploy row) — say so explicitly so
+// Claude doesn't assume "no attachments". [] = the email genuinely had no (non-inline) files.
+function formatAttachments(attachments: any): string {
+  if (attachments == null) return "(attachment list not captured for this email)";
+  const list = Array.isArray(attachments) ? attachments : [];
+  if (list.length === 0) return "(no attachments)";
+  return list
+    .map((a: any) => {
+      const name = String(a?.name ?? "(unnamed)");
+      const type = a?.contentType ? ` [${a.contentType}]` : "";
+      return `- ${name}${type}`;
+    })
+    .join("\n");
+}
+
+async function classify(reply: { subject: string; body_text: string; from_email: string; attachments: any }): Promise<Verdict | null> {
   const replyOnly = stripQuotedReply(reply.body_text || "");
   const userText =
     `Inbound email.\nFrom: ${reply.from_email || "(unknown)"}\nSubject: ${reply.subject || "(none)"}\n\n`
+    + `Attachments:\n${formatAttachments(reply.attachments)}\n\n`
     + `Body (quoted thread already stripped):\n${replyOnly.slice(0, 6000)}`;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -114,7 +152,7 @@ serve(async (req) => {
 
   try {
     const { data: rows, error } = await sb.from("dr_outreach_replies")
-      .select("id, subject, body_text, from_email")
+      .select("id, subject, body_text, from_email, attachments")
       .is("scan_ack_at", null)
       .order("received_at", { ascending: false })
       .limit(batch);

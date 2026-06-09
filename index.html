@@ -727,6 +727,23 @@
   .note-banner.scan-reply .label,
   .note-banner.scan-reply .note-meta,
   .note-banner.scan-reply .note-subject { color: #16557A; }
+  /* Attachment chips on the Scan Submission email card — the files the doctor sent in.
+     Same blue family as the card; one chip per attachment, wraps as needed. */
+  .note-banner.scan-reply .scan-attach-list {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+  }
+  .note-banner.scan-reply .scan-attach-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border-radius: 999px; max-width: 100%;
+    background: #FFFFFF; border: 1px solid #CBE3F4;
+    font-size: 12px; font-weight: 600; color: #16557A;
+  }
+  .note-banner.scan-reply .scan-attach-chip .scan-attach-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 230px;
+  }
+  .note-banner.scan-reply .scan-attach-chip .attach-size {
+    font-weight: 400; opacity: 0.75;
+  }
   /* "CC'd to" sub-card — same yellow family as Account Preferences. Used inside the Most
      Recent Communication card (outbound/approval) and on inbound reply cards. */
   .cc-banner {

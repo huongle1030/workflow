@@ -814,7 +814,12 @@ async function loadOutbound() {
   // Hide temporarily-disabled partners (e.g. SKDLA-TRI Dental) from every outbound view.
   const visibleRows = rows.filter(r => !isHiddenPartner(r.strategic_partner));
   state.scanSubAll = visibleRows;
-  state.scanSub = visibleRows.filter(r => r.triage_bucket === 'outbound_only');
+  // The Scan Submission tab shows only @aspendental.com submissions — they're the ones that
+  // get the Aspen Labs ack template + Onix job-aid PDF. Every other candidate scan submission
+  // is still classified and kept on dr_outreach_replies (and its scan-ack draft still exists),
+  // it just isn't surfaced here. to_email on a scan-ack is the original sender we'd reply to.
+  state.scanSub = visibleRows.filter(r =>
+    r.triage_bucket === 'outbound_only' && /@aspendental\.com\s*$/i.test(r.to_email || ''));
   // Pending Outbound = Full-Arch WIP worklist (separate view, not the triage split).
   let faRows;
   if (inCowork) {
@@ -1758,21 +1763,23 @@ function renderOutboundCard(r) {
         ${commCc}
       </div>` : '';
     // Scan-submission email card: the doctor's original inbound scan email (from
-    // dr_outreach_replies via scan_ack_attempt_id). Styled like the comm card so the
-    // coordinator can see what was submitted while writing/approving the ack.
-    // Show the whole scan-submission email body (just drop the EXTERNAL SENDER banner).
-    let scanReplyBody = decodeHtmlEntities((r.scan_reply_body || '').replace(/\r\n?/g, '\n')).trim();
-    scanReplyBody = stripExternalCaution(scanReplyBody);
-    const scanReplyFrom = (r.scan_reply_from || r.to_email || '').trim();
-    const hasScanReply = isScanAck && !!(scanReplyBody || r.scan_reply_subject || scanReplyFrom);
-    const scanReplyMeta = [scanReplyFrom, r.scan_reply_at ? fmtDate(r.scan_reply_at) : '']
-      .filter(Boolean).map(esc).join(' · ');
+    // dr_outreach_replies via scan_ack_attempt_id). Kept deliberately clean — just the body
+    // and the attachment(s) the doctor sent in. topEmailMessage() trims it to the latest
+    // message (drops the quoted thread + EXTERNAL SENDER banner); from/date/subject are
+    // omitted so the panel reads at a glance.
+    let scanReplyBody = decodeHtmlEntities((r.scan_reply_body || '').replace(/\r\n?/g, '\n'));
+    scanReplyBody = topEmailMessage(scanReplyBody).trim();
+    const scanAttachments = Array.isArray(r.scan_reply_attachments) ? r.scan_reply_attachments : [];
+    const hasScanReply = isScanAck && !!(scanReplyBody || scanAttachments.length);
+    const scanAttachChips = scanAttachments.length ? `
+      <div class="scan-attach-list">
+        ${scanAttachments.map(a => `<span class="scan-attach-chip" title="${esc(a && a.name || '')}">📎 <span class="scan-attach-name">${esc(a && a.name || '(unnamed)')}</span>${a && a.size ? `<span class="attach-size">${esc(fmtBytes(a.size))}</span>` : ''}</span>`).join('')}
+      </div>` : '';
     const scanReplyCard = hasScanReply ? `
       <div class="note-banner scan-reply">
         <div class="label">📩 Scan Submission Email</div>
-        ${scanReplyMeta ? `<div class="note-meta">${scanReplyMeta}</div>` : ''}
-        ${r.scan_reply_subject ? `<div class="note-subject">${esc(r.scan_reply_subject)}</div>` : ''}
         ${scanReplyBody ? `<div class="text">${esc(scanReplyBody)}</div>` : ''}
+        ${scanAttachChips}
       </div>` : '';
     // Scan-submission cards don't show Account Preferences (the coordinator is replying to
     // the inbound scan email, not composing an account-tailored outreach).
