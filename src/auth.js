@@ -11,7 +11,7 @@ import {
 } from './auth-ui.js';
 
 const ALLOWED_DOMAIN = 'skdla.com';
-const APP_NAME = 'caseCoord_designApprovals';
+const APP_NAME = 'workflow';
 
 // Roles a new hire may self-request on the role-selection screen.
 // NOTE: `admin` and `executive` are intentionally excluded — they are assigned
