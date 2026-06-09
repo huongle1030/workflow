@@ -159,7 +159,10 @@ function renderDesignQueue() {
   const active = DESIGN_SUBTABS.find(t => t[0] === designTab) || DESIGN_SUBTABS[0];
   const list = sortByShip(cases.filter(active[2]));
   const head = `<div style="font-size:16px;font-weight:600;margin-bottom:12px">Design Team</div>`;
-  const body = designTab === 'outsource' ? renderOutsourceGroups(list) : (designTab === 'qc' ? renderQcTab(list) : (list.length ? tblWrap(list, 'design') : emptyMsg('No cases here')));
+  const body = designTab === 'outsource' ? renderOutsourceGroups(list)
+    : designTab === 'qc' ? renderQcTab(list)
+    : designTab === 'complete' ? renderCompleteTab(list)
+    : (list.length ? tblWrap(list, 'design') : emptyMsg('No cases here'));
   return head + `<div class="de-tabs">${tabs}</div>` + queueSearchBar() + body;
 }
 function setDesignTab(t) { designTab = t; renderMode('design'); }
@@ -174,6 +177,92 @@ function renderQcTab(list) {
   else { const g = list.filter(c => partnerOf(c) === qcPartnerFilter); body = g.length ? tblWrap(g, 'design') : emptyMsg('No QC cases for ' + (OUTSOURCE_PARTNERS[qcPartnerFilter] || qcPartnerFilter)); }
   return filterBar + body;
 }
+
+// ── Complete tab (filter by completion date + outsource partner) ────
+// "Completed (PST)" is derived from the QC-pass timeline event — the moment the
+// "Confirm QC Pass — Mark Complete" button was pressed (advanceStage → cfEvent
+// stamps a UTC instant). No new DB column: existing completed cases backfill
+// from that same event; any case lacking it shows "—".
+let completePartner = 'all';   // 'all' | 'adite' | 'heygears' | 'cadora'
+let completeFrom = '';         // 'YYYY-MM-DD' (Pacific), inclusive lower bound
+let completeTo = '';           // 'YYYY-MM-DD' (Pacific), inclusive upper bound
+function completedAtIso(c) {
+  const ev = (c.timeline || []).filter(e => e && /case complete/i.test(e.text || '')).pop();
+  return ev && ev.at ? ev.at : null;
+}
+function fmtPstTs(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d.getTime())) return '';
+  const tz = { timeZone: 'America/Los_Angeles' };
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', ...tz });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, ...tz });
+  return date + ' ' + time + ' PST';
+}
+function completedPacificDate(c) {
+  const iso = completedAtIso(c); if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); // YYYY-MM-DD for range compare
+}
+function partnerLabel(c) { const p = partnerOf(c); return p ? (OUTSOURCE_PARTNERS[p] || p) : '—'; }
+// Most-recently-completed first; cases without a recorded completion sink to the bottom.
+function sortByCompleted(list) {
+  return list.slice().sort((a, b) => {
+    const av = completedAtIso(a) || '', bv = completedAtIso(b) || '';
+    if (av && bv) return av < bv ? 1 : (av > bv ? -1 : 0);
+    if (av) return -1; if (bv) return 1; return 0;
+  });
+}
+function applyCompleteFilters(list) {
+  return list.filter(c => {
+    if (completePartner !== 'all' && partnerOf(c) !== completePartner) return false;
+    if (completeFrom || completeTo) {
+      const cd = completedPacificDate(c);
+      if (!cd) return false;                       // can't date-filter a case with no completion time
+      if (completeFrom && cd < completeFrom) return false;
+      if (completeTo && cd > completeTo) return false;
+    }
+    return true;
+  });
+}
+function completeTblRows(list) {
+  return list.map(c => {
+    const ts = fmtPstTs(completedAtIso(c));
+    return `<div class="case-row" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" onclick="CF.openCase('design','${c.id}')" tabindex="0" role="button">`
+      + `<div class="td case-id">${c.caseNum || '—'}</div>`
+      + `<div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div>`
+      + `<div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div>`
+      + `<div class="td" style="font-size:12px">${esc(partnerLabel(c))}</div>`
+      + `<div class="td">${rushBadge(c.rush)}</div>`
+      + `<div class="td">${fmtDate(c.shipDate)}</div>`
+      + `<div class="td">${fmtDate(c.drDueDate)}</div>`
+      + `<div class="td" style="font-size:12px">${ts ? esc(ts) : '<span style="color:var(--color-text-tertiary)">—</span>'}</div>`
+      + `</div>`;
+  }).join('');
+}
+function completeTblWrap(list) {
+  return `<div class="cases-table cases-table-complete"><div class="table-header">`
+    + `<div class="th">Case #</div><div class="th">Patient</div><div class="th">Doctor</div><div class="th">Partner</div><div class="th">Rush</div><div class="th">Ship Date</div><div class="th">Dr Due Date</div><div class="th">Completed (PST)</div>`
+    + `</div>${completeTblRows(list)}</div>`;
+}
+function renderCompleteTab(list) {
+  const filtered = sortByCompleted(applyCompleteFilters(list));
+  const partners = [['all', 'All'], ['adite', 'Adite'], ['heygears', 'HeyGears'], ['cadora', 'Cadora']];
+  const partnerBtns = partners.map(([k, label]) => `<button class="de-tab${completePartner === k ? ' active' : ''}" onclick="CF.setCompletePartner('${k}')">${esc(label)}</button>`).join('');
+  const hasFilter = completeFrom || completeTo || completePartner !== 'all';
+  const dateFrom = `<input type="date" class="cf-date-input"${completeFrom ? ` value="${esc(completeFrom)}"` : ''}${completeTo ? ` max="${esc(completeTo)}"` : ''} onchange="CF.setCompleteFrom(this.value)" aria-label="Completed on or after" />`;
+  const dateTo = `<input type="date" class="cf-date-input"${completeTo ? ` value="${esc(completeTo)}"` : ''}${completeFrom ? ` min="${esc(completeFrom)}"` : ''} onchange="CF.setCompleteTo(this.value)" aria-label="Completed on or before" />`;
+  const filterBar = `<div class="cf-complete-filters">`
+    + `<div class="cf-cf-group"><span class="sec-label" style="margin:0">Date completed</span>${dateFrom}<span style="color:var(--color-text-tertiary);font-size:12px">to</span>${dateTo}</div>`
+    + `<div class="cf-cf-group"><span class="sec-label" style="margin:0">Partner</span>${partnerBtns}</div>`
+    + (hasFilter ? `<button class="btn btn-sm" onclick="CF.clearCompleteFilters()">Clear filters</button>` : '')
+    + `</div>`;
+  const body = filtered.length ? completeTblWrap(filtered) : emptyMsg('No completed cases match these filters');
+  return filterBar + body;
+}
+function setCompletePartner(p) { completePartner = p; renderMode('design'); }
+function setCompleteFrom(v) { completeFrom = v || ''; renderMode('design'); }
+function setCompleteTo(v) { completeTo = v || ''; renderMode('design'); }
+function clearCompleteFilters() { completePartner = 'all'; completeFrom = ''; completeTo = ''; renderMode('design'); }
 
 // ── Data Entry queue (3 sub-tabs) ───────────────────────────────────
 let deTab = 'main';
@@ -1141,6 +1230,8 @@ const CF = {
   crSendToDesign, crHoldMissing, showTaNotes, crEscalateTa, crPassToScanning,
   // design routing (outsource partners / bar / vjig / milling)
   showDesignRouting, showOutsourcePartners, routeDesign, sendToOutsource, clearDesignRoute, exportDesignZip, setQcPartner,
+  // complete tab filters
+  setCompletePartner, setCompleteFrom, setCompleteTo, clearCompleteFilters,
   // file preview (signed URL)
   previewFile,
   // design checklist
