@@ -140,6 +140,12 @@ function install(opts = {}) {
   loadStore();
   document.addEventListener('input', onEdit, true);
   document.addEventListener('change', onEdit, true);
+  // Flush any debounced write immediately when the tab is closing or hidden, so the
+  // last few keystrokes before an accidental tab-close / reload aren't lost.
+  const flush = () => { if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; } persistNow(); };
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('beforeunload', flush);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
 }
 
 // Re-apply every stored draft for the current user into matching fields under `root`.
