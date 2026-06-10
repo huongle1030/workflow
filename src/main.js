@@ -144,7 +144,7 @@ function isNewOrUnclassified(r) {
 // NOTE: the DOM ids/permission keys keep their historical names — data-tab/panel/badge/list
 // "outbound" => the Scan Submission tab, "approval" => the Pending Outbound tab. Only the JS
 // identifiers were de-inverted to match the renamed UI labels.
-let state = { scanSub: [], inbound: [], audit: [] };
+let state = { scanSub: [], inbound: [], audit: [], accountmgr: [] };
 let auditWindowDays = parseInt(localStorage.getItem('skdla_audit_window') || '7', 10);
 // Tracks accounts we've already kicked off summary generation for in this
 // session, so the lazy backfill never fires twice for the same account.
@@ -268,7 +268,11 @@ async function restRpc(fnName, args) {
       toast('RPC error: ' + text.slice(0, 200), 'err');
       throw new Error(text);
     }
-    const data = await resp.json();
+    // void-returning RPCs (confirm_reply, escalate_reply_for_call, …) reply 204 / empty body.
+    // Parsing that with resp.json() throws "Unexpected end of JSON input", so read text first
+    // and only JSON-parse when there's actually a body.
+    const text = await resp.text();
+    const data = text ? JSON.parse(text) : null;
     lastResponse = data; updateDiag();
     return data;
   } catch (err) {
@@ -405,7 +409,7 @@ async function loadAll() {
   if (tourActive) return;
   const ctx = captureUiContext();
   document.getElementById('lastUpdated').textContent = 'Refreshing…';
-  await Promise.all([loadOutbound(), loadInbound(), loadAudit(), loadReschedule(), loadReady(), loadEditLog(), loadFeedback()]);
+  await Promise.all([loadOutbound(), loadInbound(), loadAccountMgr(), loadAudit(), loadReschedule(), loadReady(), loadEditLog(), loadFeedback()]);
   const now = new Date();
   document.getElementById('lastUpdated').textContent =
     'Updated ' + now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -915,6 +919,21 @@ async function loadInbound() {
   renderInbound();
 }
 
+// Account Manager tab: replies a coordinator routed onward from Pending Classification
+// (Pricing/Product Q or Escalate-Call). Visibility worklist only — no email is drafted.
+async function loadAccountMgr() {
+  let rows;
+  if (inCowork) {
+    rows = await runMcpSql('SELECT * FROM v_account_manager_actions LIMIT 2000') || [];
+  } else {
+    rows = await restGet('/rest/v1/v_account_manager_actions?select=*&limit=2000') || [];
+  }
+  state.accountmgr = rows.filter(r => !isHiddenPartner(r.strategic_partner));
+  const badge = document.getElementById('badge-am');
+  if (badge) badge.textContent = state.accountmgr.length;
+  renderAccountMgr();
+}
+
 async function loadAudit() {
   // Calculate the cutoff date for the current window
   const days = auditWindowDays;
@@ -1296,6 +1315,8 @@ function onGlobalSearch(value) {
     if (typeof renderReady === 'function') renderReady();
   } else if (activeTab === 'reschedule') {
     if (typeof renderReschedule === 'function') renderReschedule();
+  } else if (activeTab === 'accountmgr') {
+    renderAccountMgr();
   }
 }
 
@@ -1315,6 +1336,7 @@ function updateGlobalSearchScope() {
     outbound: 'Scan Submission',
     approval: 'Pending Outbound',
     inbound: 'Pending Classification',
+    accountmgr: 'Account Manager',
     ready: 'Ready for ABS Scan',
     reschedule: 'Reschedule',
   };
@@ -2653,6 +2675,18 @@ const AI_CLASS_LABELS = {
 };
 function aiClassLabel(v) { return AI_CLASS_LABELS[v] || v || 'Unclear'; }
 
+// Friendly labels for the coordinator's human_classification (the button they clicked).
+// Shares AI_CLASS_LABELS' wording where it overlaps, plus the routing-only decisions.
+const HUMAN_CLASS_LABELS = {
+  approved:                    'Approved',
+  approved_with_mods:          'Approved + Mods',
+  modification:                'Modification',
+  pricing_or_product_question: 'Pricing / Product Q',
+  escalated_call:              'Escalate (Call)',
+  other:                       'Other',
+};
+function humanClassLabel(v) { return HUMAN_CLASS_LABELS[v] || v || ''; }
+
 // Status column — filters by AI classification.
 const INBOUND_STATUS_OPTIONS = [
   { value: '',                              label: 'All' },
@@ -2844,6 +2878,11 @@ function renderInbound() {
     const escalationChip = r.needs_escalation
       ? `<span class="match-chip escalate" title="Looks time-sensitive — consider escalating to the account manager for a phone call">Time-sensitive; Call</span>`
       : '';
+    // Coordinator's own classification, when set. In practice only 'other' lingers here (every
+    // other decision leaves the queue), so this surfaces the human tag next to the AI guess.
+    const humanChip = r.human_classification
+      ? `<span class="ai-chip" style="background:var(--charcoal);color:#fff;" title="Coordinator classification">You: ${esc(humanClassLabel(r.human_classification))}</span>`
+      : '';
     // Admin-only AI case suggestion. Advisory: it never writes the real
     // case_number — the ⚠ tag stays until "Use this case #" links it via the
     // existing manuallyLinkReply path. Gated by VIEW_CASE_SUGGESTION (admin only).
@@ -2868,6 +2907,7 @@ function renderInbound() {
           ${matchChip}
           ${suggestionChip}
           <span class="ai-chip ${r.ai_classification}">${esc(aiClassLabel(r.ai_classification))}</span>
+          ${humanChip}
           ${lowConfChip}
           ${escalationChip}
           <div class="who">From <strong>${esc(r.from_email)}</strong> · ${esc(r.practice_name || '')}</div>
@@ -2920,6 +2960,78 @@ function renderInbound() {
           <button class="act" style="background: var(--red);" onclick="escalateForCall('${r.reply_id}')" ${isUnmatched ? 'disabled title="Link this reply to a case first"' : ''} title="Escalate to the account manager for a phone call (time-sensitive scheduling/delivery)">Escalate (Call)</button>
           <button class="act slate" onclick="classifyReply('${r.reply_id}', 'other')">Other</button>
           ${isUnmatched ? suggestionActions : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Account Manager worklist. Read-only cards (no email draft) for replies routed onward from
+// Pending Classification. Each carries a flag chip: yellow for Pricing/Product Q, red for CALL.
+function renderAccountMgr() {
+  const root = document.getElementById('list-accountmgr');
+  if (!root) return;
+  const countEl = document.getElementById('accountmgr-count');
+  const all = state.accountmgr || [];
+  if (!all.length) {
+    root.innerHTML = '<div class="empty"><strong>Nothing routed to the Account Manager.</strong><br/>Replies you mark <em>Pricing / Product Q</em> or <em>Escalate (Call)</em> in Pending Classification land here as action items.</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+  const q = (globalSearch.value || '').trim().toLowerCase();
+  let rows = all.slice();
+  if (q) rows = rows.filter(r => [r.case_number, r.dr_last_name, r.practice_name, r.patient_name, r.account_manager, r.from_email, r.subject]
+        .some(v => String(v || '').toLowerCase().includes(q)));
+  if (countEl) {
+    countEl.textContent = (rows.length !== all.length) ? `Showing ${rows.length} of ${all.length}` : `${all.length} total`;
+  }
+  if (!rows.length) {
+    root.innerHTML = '<div class="empty"><strong>No cases match your search.</strong><br/>Clear the search to see all Account Manager action items.</div>';
+    return;
+  }
+  root.innerHTML = rows.map(r => {
+    const isCall = r.human_classification === 'escalated_call';
+    const flagChip = isCall
+      ? '<span class="match-chip escalate" style="background:var(--red);color:#fff;">CALL</span>'
+      : '<span class="match-chip" style="background:var(--gold);color:#3a2f00;">Pricing / Product Q</span>';
+    // Strategic partner chip (same palette as the outbound cards).
+    const sp = r.strategic_partner || '';
+    let spClass = '';
+    if (/clearchoice/i.test(sp)) spClass = 'clearchoice';
+    else if (/aspen/i.test(sp)) spClass = 'aspen';
+    else if (/tri/i.test(sp)) spClass = 'tri';
+    else if (/incisive/i.test(sp)) spClass = 'incisive';
+    else if (/heartland|mb2|western|legacy/i.test(sp)) spClass = 'other';
+    const partnerChip = sp ? '<span class="partner-chip ' + spClass + '">' + esc(sp) + '</span>' : '';
+    const who = esc(r.dr_pref || 'Dr.') + ' ' + esc(r.dr_last_name || '') + ' · ' + esc(r.practice_name || '');
+    const dueStr = r.doctor_due_date_only ? fmtDayOnly(r.doctor_due_date_only) : '';
+    const amStr = r.account_manager || '(unassigned)';
+    const split = splitReplyAndQuote(decodeHtmlEntities(r.body_text));
+    const replyText = stripExternalCaution(split.reply);
+    return `
+    <div class="item" data-id="${r.reply_id}">
+      <div class="item-head" onclick="toggleItem('${r.reply_id}')">
+        <div>
+          <span class="case-id-block">
+            <span class="case-sub">Case ${esc(r.case_number || '—')}</span>
+          </span>
+          ${flagChip}
+          ${partnerChip}
+          <div class="who">${who}</div>
+          <div class="subject">Route to AM: <strong>${esc(amStr)}</strong>${r.current_step ? ' · ' + esc(r.current_step) : ''}${r.hold_reason ? ' · ' + esc(r.hold_reason) : ''}</div>
+        </div>
+        <div class="meta">
+          <div>Received ${fmtDate(r.received_at)}</div>
+          ${dueStr ? '<div>Due ' + dueStr + '</div>' : ''}
+          ${r.patient_name ? '<div>' + esc(r.patient_name) + '</div>' : ''}
+        </div>
+      </div>
+      <div class="item-body">
+        <div style="margin-bottom:10px;font-size:12px;color:var(--slate);"><strong>Summary:</strong> ${esc(r.ai_summary || '')}</div>
+        <div class="reply-text">${esc(replyText || '(no body)')}</div>
+        ${renderCcChips(r.cc_recipients)}
+        <div class="actions" style="margin-top:14px;">
+          <button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>
         </div>
       </div>
     </div>`;
@@ -3119,12 +3231,35 @@ function dropInboundReply(replyId) {
   try { renderInbound(); } catch (e) {}
 }
 async function classifyReply(id, decision) {
-  if (!confirm('Mark this reply as "' + decision + '"? This will close the case if approved.')) return;
+  const label = HUMAN_CLASS_LABELS[decision] || decision;
+  // Decision-specific confirm copy + post-action routing.
+  //   approved / approved_with_mods / modification -> clears the card, drafts a templated email
+  //     into Pending Outbound (design_approval / design_modification).
+  //   pricing_or_product_question -> clears the card, moves it to the Account Manager tab.
+  //   other -> STAYS in Pending Classification, just tagged for later handling.
+  let msg;
+  if (decision === 'approved' || decision === 'approved_with_mods' || decision === 'modification') {
+    msg = 'Mark this reply as "' + label + '"?\n\nThis clears it from Pending Classification and drafts a templated email in Pending Outbound for your review.';
+  } else if (decision === 'pricing_or_product_question') {
+    msg = 'Mark this reply as "Pricing / Product Q"?\n\nThis moves it to the Account Manager tab for follow-up.';
+  } else { // other
+    msg = 'Mark this reply as "Other"?\n\nIt stays in Pending Classification, tagged for later handling.';
+  }
+  if (!confirm(msg)) return;
   try {
     await callRpc('confirm_reply', { p_reply_id: id, p_decision: decision, p_coordinator_id: REVIEWER });
-    toast('Reply marked as ' + decision, 'ok');
-    dropInboundReply(id);   // card disappears now
-    await loadAll();        // refresh counts + other tabs (incl. Ready for ABS Scan) in the background
+    if (decision === 'other') {
+      // 'other' is left undecided server-side, so the row stays in v_pending_inbound. Tag it
+      // optimistically so the chip shows immediately without waiting for the refresh.
+      const row = (state.inbound || []).find(r => r.reply_id === id);
+      if (row) row.human_classification = 'other';
+      renderInbound();
+      toast('Tagged as Other — kept in Pending Classification', 'ok');
+    } else {
+      dropInboundReply(id);   // leaves Pending Classification now
+      toast('Reply marked as ' + label, 'ok');
+    }
+    await loadAll();          // refresh Pending Outbound / Account Manager / counts in the background
   } catch (e) {}
 }
 
@@ -3456,7 +3591,7 @@ function closeSettings() {
 // =====================================================================
 let currentMode = localStorage.getItem('skdla_mode') || 'outreach';
 
-const OUTREACH_PANELS = ['outbound','approval','ready','inbound','audit','submit','reschedule','editlog','feedback','designdept'];
+const OUTREACH_PANELS = ['outbound','approval','ready','inbound','accountmgr','audit','submit','reschedule','editlog','feedback','designdept'];
 const CC_PANELS       = ['cc-dashboard','cc-newlog','cc-history','cc-tracker','cc-coordinators','cc-prefs'];
 // Case Lookup is its own top-level mode (single panel `panel-lookup`, no tab row),
 // available to every role. See switchMode's `lookup` branch.
@@ -3669,6 +3804,7 @@ const TAB_CAP = {
   outbound:   CAPABILITIES.TAB_OUTBOUND,
   approval:   CAPABILITIES.TAB_OUTBOUND,  // same drafts as Outbound, triaged -> same capability
   inbound:    CAPABILITIES.TAB_INBOUND,
+  accountmgr: CAPABILITIES.TAB_INBOUND,  // same audience as Pending Classification — replies routed onward
   ready:      CAPABILITIES.TAB_READY,
   reschedule: CAPABILITIES.TAB_RESCHEDULE,
   audit:      CAPABILITIES.TAB_AUDIT,
@@ -3679,7 +3815,7 @@ const TAB_CAP = {
 // Parent tabs that carry no panel of their own — clicking one opens its first
 // permitted sub-tab, shown in a secondary sub-nav row beneath the main tabs.
 const TAB_GROUPS = {
-  pending: { children: ['outbound','approval','inbound'], subnav: 'subtabs-pending' },
+  pending: { children: ['outbound','approval','inbound','accountmgr'], subnav: 'subtabs-pending' },
   actions: { children: ['ready','reschedule'],            subnav: 'subtabs-actions' },
 };
 // The group key (e.g. 'pending') that owns a sub-tab, or null for top-level tabs.
@@ -3726,6 +3862,7 @@ function runTabSideEffects(which) {
   // drafts the cron has composed since the last refresh.
   if (which === 'ready') renderReady();
   if (which === 'approval') renderPendingOut();
+  if (which === 'accountmgr') renderAccountMgr();
   if (which === 'editlog') loadEditLog();
   if (which === 'feedback') loadFeedback();
   if (which === 'designdept' && window.DESIGN && window.DESIGN.render) window.DESIGN.render();
