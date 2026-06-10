@@ -1584,9 +1584,9 @@ function renderAttachZone(attemptId) {
              ondragover="event.preventDefault(); this.classList.add('dragover');"
              ondragleave="this.classList.remove('dragover');"
              ondrop="this.classList.remove('dragover'); handleAttachDrop(event, '${attemptId}');">
-        <input type="file" accept="application/pdf" multiple style="display:none;"
+        <input type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" multiple style="display:none;"
                onchange="handleAttachSelect(this, '${attemptId}');" />
-        <span class="attach-dz-text">${uploading ? 'Uploading…' : (rxRequired ? '📎 RX PDF required - drag the RX here, or click to attach' : '📎 Drag PDFs here, or click to attach')}</span>
+        <span class="attach-dz-text">${uploading ? 'Uploading…' : (rxRequired ? '📎 RX required - drag the RX (PDF or image) here, or click to attach' : '📎 Drag PDFs or images here, or click to attach')}</span>
       </label>
     </div>`;
 }
@@ -1618,14 +1618,14 @@ function onCcInput(attemptId) {
 }
 
 async function uploadAttachments(files, attemptId) {
-  const pdfs = files.filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  if (pdfs.length < files.length) toast('Only PDF files can be attached', 'err');
-  if (!pdfs.length) return;
+  const accepted = files.filter(f => /^(application\/pdf|image\/(jpeg|png))$/i.test(f.type) || /\.(pdf|jpe?g|png)$/i.test(f.name));
+  if (accepted.length < files.length) toast('Only PDF or image (JPG, JPEG, PNG) files can be attached', 'err');
+  if (!accepted.length) return;
   uploadingByAttempt[attemptId] = true;
   rerenderOutboundLists();
   try {
-    for (const file of pdfs) await uploadOneAttachment(file, attemptId);
-    toast(pdfs.length === 1 ? 'Attachment added' : `${pdfs.length} attachments added`, 'ok');
+    for (const file of accepted) await uploadOneAttachment(file, attemptId);
+    toast(accepted.length === 1 ? 'Attachment added' : `${accepted.length} attachments added`, 'ok');
   } catch (e) {
     toast('Attach failed: ' + (e.message || e), 'err');
   } finally {
@@ -1637,11 +1637,16 @@ async function uploadAttachments(files, attemptId) {
 async function uploadOneAttachment(file, attemptId) {
   const cfg = getConfig();
   const base = cfg.url.replace(/\/+$/, '');
+  // Derive the content type from the file itself so PDFs and images each upload with the
+  // correct MIME type (older browsers may not set file.type, so fall back on the extension).
+  const ext = (file.name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
+  const contentType = file.type
+    || (ext === 'png' ? 'image/png' : (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'application/pdf');
   // 1. Mint a service-role signed upload URL (also records the attachment row).
   const res = await fetch(base + '/functions/v1/outreach-attachment', {
     method: 'POST',
     headers: { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'sign', attempt_id: attemptId, filename: file.name, contentType: 'application/pdf', size: file.size, uploaded_by: (loginIdentity().email || loginIdentity().name) }),
+    body: JSON.stringify({ action: 'sign', attempt_id: attemptId, filename: file.name, contentType, size: file.size, uploaded_by: (loginIdentity().email || loginIdentity().name) }),
   });
   const out = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(out.error || ('sign ' + res.status));
@@ -1650,7 +1655,7 @@ async function uploadOneAttachment(file, attemptId) {
   // stuck on "Uploading…".) out.signedUrl already carries the upload token.
   const putRes = await fetch(out.signedUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'false' },
+    headers: { 'Content-Type': contentType, 'x-upsert': 'false' },
     body: file,
   });
   if (!putRes.ok) {

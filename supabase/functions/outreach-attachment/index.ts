@@ -48,9 +48,17 @@ serve(async (req) => {
   if (action === "sign") {
     const { attempt_id, filename, contentType, size, uploaded_by } = body;
     if (!attempt_id) return json({ error: "attempt_id required" }, 400);
-    if ((contentType || "").toLowerCase() !== "application/pdf" && !/\.pdf$/i.test(filename || "")) {
-      return json({ error: "only PDF files are allowed" }, 400);
+    const ct = (contentType || "").toLowerCase();
+    const typeOk = /^(application\/pdf|image\/(jpeg|png))$/.test(ct);
+    const extOk = /\.(pdf|jpe?g|png)$/i.test(filename || "");
+    if (!typeOk && !extOk) {
+      return json({ error: "only PDF or image (JPG, JPEG, PNG) files are allowed" }, 400);
     }
+    // Resolve the stored MIME type from the content type, falling back to the file extension.
+    const ext = (String(filename || "").match(/\.([a-z0-9]+)$/i) || ["", ""])[1].toLowerCase();
+    const mimeType = typeOk
+      ? ct
+      : ext === "png" ? "image/png" : (ext === "jpg" || ext === "jpeg") ? "image/jpeg" : "application/pdf";
     if (typeof size === "number" && size > MAX_BYTES) {
       return json({ error: `file too large (max ${Math.floor(MAX_BYTES / 1024 / 1024)} MB)` }, 400);
     }
@@ -66,7 +74,7 @@ serve(async (req) => {
         storage_bucket: BUCKET,
         storage_path: path,
         filename: display,
-        mime_type: "application/pdf",
+        mime_type: mimeType,
         size_bytes: typeof size === "number" ? size : null,
         uploaded_by: uploaded_by ?? null,
       })
