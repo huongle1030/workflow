@@ -111,6 +111,9 @@ function render() {
       '<div class="qc-body">' + (state.activeTab === 'qc' ? renderQcReject() : renderInternalRemake()) + '</div>' +
       recentTable() +
     '</div>';
+  // Re-apply any in-progress form values the user had typed (survives reloads). The
+  // synthetic input/change events keep state.f / state.ir in sync with the DOM.
+  if (window.DraftGuard) window.DraftGuard.restore(el);
 }
 
 function header() {
@@ -242,19 +245,19 @@ function renderInternalRemake() {
   return '<div class="cc-form-card" style="max-width:none">' +
     '<div class="cc-form-grid">' +
       '<div class="full"><label>Case Number <span class="req"></span></label>' +
-        '<input class="cc-input mono" type="text" placeholder="e.g. 2026-12345" value="' + attr(f.case_number) + '" oninput="QCMODE.setIr(\'case_number\', this.value)" onchange="QCMODE.lookupIrCase()">' + lookupNote + '</div>' +
+        '<input class="cc-input mono" data-draft="ir-casenum" type="text" placeholder="e.g. 2026-12345" value="' + attr(f.case_number) + '" oninput="QCMODE.setIr(\'case_number\', this.value)" onchange="QCMODE.lookupIrCase()">' + lookupNote + '</div>' +
       '<div><label>Department <span class="req"></span></label>' +
         '<select class="cc-input" onchange="QCMODE.setIr(\'department\', this.value)">' + optionList(DEPARTMENTS, f.department, 'Select dept') + '</select></div>' +
       '<div><label>Your Name <span class="req"></span></label>' +
-        '<input class="cc-input" type="text" placeholder="Your name" value="' + attr(f.logged_by) + '" oninput="QCMODE.setIr(\'logged_by\', this.value)"></div>' +
+        '<input class="cc-input" data-draft="ir-loggedby" type="text" placeholder="Your name" value="' + attr(f.logged_by) + '" oninput="QCMODE.setIr(\'logged_by\', this.value)"></div>' +
       '<div><label>Technician (worked on product) <span class="req"></span></label>' +
-        '<input class="cc-input" type="text" placeholder="Technician name" value="' + attr(f.technician) + '" oninput="QCMODE.setIr(\'technician\', this.value)"></div>' +
+        '<input class="cc-input" data-draft="ir-tech" type="text" placeholder="Technician name" value="' + attr(f.technician) + '" oninput="QCMODE.setIr(\'technician\', this.value)"></div>' +
       '<div><label>Step where issue occurred' + (state.irSteps.length ? ' <span class="req"></span>' : '') + '</label>' +
         '<select class="cc-input"' + (state.irSteps.length ? '' : ' disabled') + ' onchange="QCMODE.setIr(\'issue_step\', this.value)">' + stepOptions + '</select></div>' +
       '<div><label>Ship Date <span class="req"></span></label>' +
-        '<input class="cc-input" type="date" value="' + attr(f.ship_date) + '" oninput="QCMODE.setIr(\'ship_date\', this.value)"></div>' +
+        '<input class="cc-input" data-draft="ir-shipdate" type="date" value="' + attr(f.ship_date) + '" oninput="QCMODE.setIr(\'ship_date\', this.value)"></div>' +
       '<div><label>Doctor Due Date <span class="req"></span></label>' +
-        '<input class="cc-input" type="date" value="' + attr(f.dr_due_date) + '" oninput="QCMODE.setIr(\'dr_due_date\', this.value)"></div>' +
+        '<input class="cc-input" data-draft="ir-drdue" type="date" value="' + attr(f.dr_due_date) + '" oninput="QCMODE.setIr(\'dr_due_date\', this.value)"></div>' +
       '<div><label>Received Date <span class="qc-auto">auto</span></label>' +
         '<input class="cc-input" type="date" value="' + attr(f.received_date) + '" readonly></div>' +
       '<div><label>Start Date <span class="qc-auto">auto</span></label>' +
@@ -264,7 +267,7 @@ function renderInternalRemake() {
       '<div><label>Total Invoice <span class="qc-auto">auto</span></label>' +
         '<input class="cc-input" type="text" value="' + attr(invStr) + '" placeholder="—" readonly></div>' +
       '<div class="full"><label>Description of Issue <span class="req"></span></label>' +
-        '<textarea class="cc-input" rows="3" placeholder="Describe what went wrong and what needs to be fixed…" oninput="QCMODE.setIr(\'description\', this.value)">' + esc(f.description) + '</textarea></div>' +
+        '<textarea class="cc-input" data-draft="ir-desc" rows="3" placeholder="Describe what went wrong and what needs to be fixed…" oninput="QCMODE.setIr(\'description\', this.value)">' + esc(f.description) + '</textarea></div>' +
       '<div class="full"><label>Need Technical Expert Assistance? <span class="req"></span></label>' +
         '<div class="qc-yn-grid">' + yn(true, 'Yes', 'Notify tech experts') + yn(false, 'No', 'No expert needed') + '</div></div>' +
     '</div>' +
@@ -375,6 +378,7 @@ async function submitQc() {
     });
     state.step = 3;
     toast('QC reject logged', 'ok');
+    if (window.DraftGuard) window.DraftGuard.clearMatching('qc-');   // logged — drop the saved reject draft
     refreshRecent();          // pull the new row into the table (also re-renders)
   } catch (e) {
     toast(e.message || 'Failed to save', 'err');
@@ -414,6 +418,7 @@ async function stage() {
 function resetQc() {
   state.qc = { ...EMPTY_QC }; state.step = 1; state.drDueDate = '';
   state.stagingDone = false; state.staging = false; state.saving = false;
+  if (window.DraftGuard) window.DraftGuard.clearMatching('qc-');   // fresh form — discard any saved draft
   render();
 }
 
@@ -493,6 +498,7 @@ async function submitIr() {
     }
     state.irDone = true;
     toast('Internal remake submitted', 'ok');
+    if (window.DraftGuard) window.DraftGuard.clearMatching('ir-');   // submitted — drop the saved IR draft
     refreshMrb();          // pull the new row into the dashboard (also re-renders)
   } catch (e) {
     toast(e.message || 'Something went wrong', 'err');
@@ -503,6 +509,7 @@ async function submitIr() {
 function resetIr() {
   state.ir = { ...EMPTY_IR }; state.needsExpert = null; state.irDone = false; state.irSaving = false;
   state.irSteps = []; state.irLookupCase = ''; state.irLookupStatus = ''; state.irLookupLoading = false;
+  if (window.DraftGuard) window.DraftGuard.clearMatching('ir-');   // fresh form — discard any saved draft
   render();
 }
 

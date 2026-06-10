@@ -7,6 +7,10 @@ import { can, CAPABILITIES, getCurrentRole, ROLE_LABELS, ROLES } from './permiss
 // Code 39 barcode generator for the Case Lookup tab (scan-interchangeable with
 // the ABS work-ticket barcode). Client-side only, nothing persisted. See barcode.js.
 import { renderCode39, downloadCode39Png, downloadCode39Svg } from './barcode.js';
+// Draft preservation: keeps in-progress edits (email drafts, case/QC fields) alive
+// across the 60s auto-refresh and full page reloads. Also sets window.DraftGuard so
+// the mode modules can call restore() from their own render paths.
+import DraftGuard from './draftGuard.js';
 // CaseFlow production modes (Data Entry / Case Review / Scanning / Design Team).
 // Importing for side effects: sets window.CF and bundles the caseflow module + CSS.
 import { initCaseFlow } from './caseflow/app.js';
@@ -386,6 +390,10 @@ function restoreUiContext(ctx) {
     const ef = document.getElementById('edit-' + id);
     if (ef) ef.classList.add('shown');
   }
+  // Also re-open any editor that still holds an unsent draft (covers reloads, where
+  // there's no prior ctx to reopen from), then re-apply the saved field values.
+  openEditFormsWithDrafts();
+  DraftGuard.restore();
   // Restore focus on the input the coordinator was typing into (e.g., search bar)
   if (ctx.activeEl) {
     const el = document.getElementById(ctx.activeEl);
@@ -400,6 +408,20 @@ function restoreUiContext(ctx) {
   }
   // Restore scroll last so the layout settles first
   window.scrollTo({ top: ctx.scrollY, behavior: 'instant' in window ? 'instant' : 'auto' });
+}
+
+// Open any email editor (.edit-form#edit-<attemptId>) that still holds an unsent
+// draft, so the card re-opens to the editor (not just stays expanded) after a refresh
+// or reload. The actual text is re-applied by DraftGuard.restore().
+function openEditFormsWithDrafts() {
+  document.querySelectorAll('.edit-form[id^="edit-"]').forEach(ef => {
+    const id = ef.id.replace(/^edit-/, '');
+    if (DraftGuard.hasDraft('body-' + id) || DraftGuard.hasDraft('subject-' + id) || DraftGuard.hasDraft('note-' + id)) {
+      ef.classList.add('shown');
+      const item = ef.closest('.item');
+      if (item) item.classList.add('expanded');
+    }
+  });
 }
 
 async function loadAll() {
@@ -541,6 +563,7 @@ async function submitFeedback() {
     toast('Thanks! Feedback submitted.', 'ok');
     document.getElementById('fb-message').value = '';
     document.getElementById('fb-case').value = '';
+    DraftGuard.clearMatching('fb-');   // submitted — drop the saved feedback draft
     await loadFeedback();
   } catch (e) {
     toast('Could not submit: ' + (e.message || e), 'err');
@@ -3078,7 +3101,11 @@ function toggleItem(id) {
   if (el) el.classList.toggle('expanded');
 }
 function showEdit(id) { document.getElementById('edit-' + id).classList.add('shown'); }
-function hideEdit(id) { document.getElementById('edit-' + id).classList.remove('shown'); }
+function hideEdit(id) {
+  document.getElementById('edit-' + id).classList.remove('shown');
+  // Canceling discards the in-progress draft so it doesn't resurrect on the next refresh.
+  DraftGuard.clearMatching(id);
+}
 
 // Hard RX gate before a send. Real case drafts require an attached RX PDF; scan-submission
 // acks are exempt (they carry the job-aid PDF, not an RX). Returns false — blocking the
@@ -3117,6 +3144,7 @@ async function approve(id) {
       console.error('Immediate-send failed:', e);
       toast('Approved ·will send on next tick', 'ok');
     }
+    DraftGuard.clearMatching(id);   // approved — discard any in-progress edit draft for this attempt
     await loadAll();
   } catch (e) {}
 }
@@ -3220,6 +3248,7 @@ async function saveEdit(id) {
       p_note: note || null
     });
     toast('Edited and queued', 'ok');
+    DraftGuard.clearMatching(id);   // sent — drop the draft so it won't re-appear on refresh
     await loadAll();
   } catch (e) {}
 }
@@ -6010,10 +6039,14 @@ function boot() {
   const sel = document.getElementById('audit-window');
   if (sel) sel.value = String(auditWindowDays);
 
+  // Start preserving in-progress edits. Namespaced by the signed-in user so drafts
+  // never leak across accounts on a shared browser profile.
+  DraftGuard.install({ namespace: () => loginIdentity().email || 'anon' });
+
   if (!inCowork && !getConfig().key) {
     openConfig();
   } else {
-    loadAll();
+    loadAll();   // restoreUiContext() re-applies any saved drafts after the first paint
     setInterval(loadAll, 60_000);
   }
 

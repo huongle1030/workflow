@@ -104,6 +104,8 @@ function renderMode(mode) {
   const pad = ' style="padding:18px 28px 28px"';
   if (c) { el.innerHTML = `<div class="cf-root"${pad}>${detailHeader(c, mode)}<div id="cf-detail">${renderCaseDetail(c)}</div></div>`; afterDetailRender(c); }
   else { el.innerHTML = `<div class="cf-root"${pad}>${renderQueue(mode)}</div>`; }
+  // Re-apply any in-progress field edits the user had typed (survives reloads).
+  if (window.DraftGuard) window.DraftGuard.restore(el);
 }
 
 function detailHeader(c, mode) {
@@ -1184,6 +1186,7 @@ async function createCase() {
   closeModal(); rushState = false;
   ['cf-nc-patient', 'cf-nc-doctor', 'cf-nc-notes', 'cf-nc-drdue'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('cf-nc-rush').checked = false; document.getElementById('cf-rush-row').className = 'rush-row';
+  if (window.DraftGuard) window.DraftGuard.clearMatching('cf-nc-');   // case created — discard the new-case draft
   toast(`Case created for ${patient}`);
   openCase('dataentry', c.id);
 }

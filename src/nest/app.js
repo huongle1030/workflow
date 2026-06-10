@@ -143,7 +143,10 @@ function draw() {
   else if (!state.loaded) body = `<div class="nest-loading">Loading nest worklist…</div>`;
   else body = boardsHtml();
   const open = state.loaded && state.openCaseNum ? caseByNum(state.openCaseNum) : null;
-  el.innerHTML = `<div class="nest-root">${topbarHtml()}${body}</div>${open ? modalHtml(open) : ''}`;
+  // Keep the page from jumping to the top when the board re-renders (e.g. a manual refresh).
+  const paint = () => { el.innerHTML = `<div class="nest-root">${topbarHtml()}${body}</div>${open ? modalHtml(open) : ''}`; };
+  if (window.DraftGuard) window.DraftGuard.preserveScroll(paint, el);
+  else paint();
 }
 
 function topbarHtml() {
