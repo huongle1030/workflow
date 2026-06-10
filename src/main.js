@@ -26,6 +26,9 @@ import './design/app.js';
 // still uploading so an email never goes out without its attachment.
 const attachmentsByAttempt = {};
 const uploadingByAttempt = {};
+// attempt_id of the RX drop zone the mouse is currently hovering, so a Ctrl/Cmd+V image
+// paste anywhere on the page routes to that card's attachments (set on mouseenter/leave).
+let pasteTargetAttempt = null;
 
 // Coordinator-typed CC addresses, keyed by attempt_id. Seeded from the attempt's persisted
 // cc_emails on render and updated as the coordinator edits the CC input; persisted to the
@@ -1583,10 +1586,12 @@ function renderAttachZone(attemptId) {
       <label class="attach-dropzone${uploading ? ' uploading' : ''}${rxRequired ? ' required' : ''}"
              ondragover="event.preventDefault(); this.classList.add('dragover');"
              ondragleave="this.classList.remove('dragover');"
-             ondrop="this.classList.remove('dragover'); handleAttachDrop(event, '${attemptId}');">
+             ondrop="this.classList.remove('dragover'); handleAttachDrop(event, '${attemptId}');"
+             onmouseenter="setAttachPasteTarget('${attemptId}', true);"
+             onmouseleave="setAttachPasteTarget('${attemptId}', false);">
         <input type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" multiple style="display:none;"
                onchange="handleAttachSelect(this, '${attemptId}');" />
-        <span class="attach-dz-text">${uploading ? 'Uploading…' : (rxRequired ? '📎 RX required - drag the RX (PDF or image) here, or click to attach' : '📎 Drag PDFs or images here, or click to attach')}</span>
+        <span class="attach-dz-text">${uploading ? 'Uploading…' : (rxRequired ? '📎 RX required - drag, click, or paste an image of the RX (PDF or image)' : '📎 Drag, click, or paste an image here (PDF or image)')}</span>
       </label>
     </div>`;
 }
@@ -1609,6 +1614,34 @@ async function handleAttachSelect(input, attemptId) {
   await uploadAttachments(files, attemptId);
   input.value = '';
 }
+
+// Track which RX drop zone the mouse is over so a clipboard paste routes to the right card.
+function setAttachPasteTarget(attemptId, on) {
+  if (on) pasteTargetAttempt = attemptId;
+  else if (pasteTargetAttempt === attemptId) pasteTargetAttempt = null;
+}
+
+// Paste an image straight into the hovered RX drop zone (e.g. a screenshot or copied photo).
+// Registered once on document; ignores pastes when not hovering a zone or with no image.
+async function handleAttachPaste(ev) {
+  if (!pasteTargetAttempt) return;
+  const items = ev.clipboardData && ev.clipboardData.items ? Array.from(ev.clipboardData.items) : [];
+  const imgs = items
+    .filter(it => it.kind === 'file' && /^image\/(jpeg|png)$/i.test(it.type))
+    .map(it => it.getAsFile())
+    .filter(Boolean);
+  if (!imgs.length) return;
+  ev.preventDefault();
+  // Clipboard images often arrive unnamed or all named "image.png"; give each a unique,
+  // extension-correct filename so the chip is readable and the stored object is distinct.
+  const named = imgs.map((f, i) => {
+    if (f.name && /\.(jpe?g|png)$/i.test(f.name)) return f;
+    const ext = /png$/i.test(f.type) ? 'png' : 'jpg';
+    return new File([f], `pasted-rx-${i + 1}.${ext}`, { type: f.type });
+  });
+  await uploadAttachments(named, pasteTargetAttempt);
+}
+document.addEventListener('paste', handleAttachPaste);
 
 // CC input change/blur: parse + dedupe the typed addresses into ccByAttempt and warn (once)
 // if any token isn't a valid email. Persistence to the row happens at approve/saveEdit time.
@@ -6280,7 +6313,7 @@ Object.assign(window, {
   setApprovalHold, toggleApprovalHoldDd, closeApprovalHoldDd,
   setApprovalLink, toggleApprovalLinkDd, closeApprovalLinkDd,
   // Email attachments (drop zone on outbound/approval cards)
-  handleAttachDrop, handleAttachSelect, removeAttachment,
+  handleAttachDrop, handleAttachSelect, removeAttachment, setAttachPasteTarget,
   // Inbound filters
   toggleInboundStatusDd, closeInboundStatusDd, toggleInboundCaseDd, closeInboundCaseDd,
   setInboundFilter, clearInboundSearch, toggleInboundTimeSensitive,
