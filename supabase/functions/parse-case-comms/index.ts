@@ -81,6 +81,7 @@ SHOW IN PENDING OUTBOUND
 OTHER FIELDS
 - most_recent_unapproved_reason: the single reason the case is still open on (usually design_approval; design_modification if we're chasing approval of a revised design; missing_info/waiting_on_parts if blocked on the office). null when approved/closed.
 - initial_design_in_progress: true ONLY if the case has exactly ONE communication so far (the opening note / Rx). Otherwise false.
+- approval_confidence: a number from 0 to 1 — your confidence that approval_state is correct. Be strict: use a value ABOVE 0.95 ONLY when an approval is explicit and unambiguous from the OFFICE (a clear "approved" / "looks good, proceed" genuinely from the doctor's office). Use clearly lower values (<=0.95) when the approval is inferred, ambiguous, internal-only, an "Int. Approval"/internal note, or otherwise not an explicit office approval. For non-approved states this still reflects your confidence in the verdict.
 - evidence: for the open/most-relevant reason and for the verdict, cite the timeline line's id you keyed on. Keys: each reason you gave a non-zero count, plus "verdict".
 
 OUTPUT — return ONLY this JSON, no prose:
@@ -89,6 +90,7 @@ OUTPUT — return ONLY this JSON, no prose:
   "show_in_pending_outbound": true,
   "most_recent_unapproved_reason": "design_approval",
   "initial_design_in_progress": false,
+  "approval_confidence": 0.0,
   "per_reason_attempts": {
     "design_approval": 0, "design_modification": 0, "missing_info": 0,
     "waiting_on_parts": 0, "late_approval_notice": 0, "reschedule_check": 0,
@@ -208,11 +210,16 @@ function normalize(raw: any, commCount: number, lastAt: string | null): any {
 
   const initial = (commCount === 1) ? true : !!raw?.initial_design_in_progress;
 
+  // Confidence in the approval verdict (0..1); clamp and default to null when absent/invalid.
+  let conf: number | null = Number(raw?.approval_confidence);
+  conf = Number.isFinite(conf) ? Math.min(1, Math.max(0, conf)) : null;
+
   return {
     approval_state,
     show_in_pending_outbound: show,
     most_recent_unapproved_reason: openReason,
     initial_design_in_progress: initial,
+    approval_confidence: conf,
     per_reason_attempts: attempts,
     modification_count: modCount,
     evidence: (raw && typeof raw.evidence === "object") ? raw.evidence : {},
@@ -240,6 +247,7 @@ async function parseOneCase(caseNumber: string): Promise<{ ok: boolean; result?:
       show_in_pending_outbound: true,
       most_recent_unapproved_reason: "design_approval",
       initial_design_in_progress: commCount === 1,
+      approval_confidence: null,
       per_reason_attempts: Object.fromEntries(REASONS.map((r) => [r, 0])),
       modification_count: 0,
       evidence: rows?.[0]?.id ? { verdict: rows[0].id } : {},
