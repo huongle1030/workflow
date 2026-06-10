@@ -141,72 +141,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function htmlBulletsToText(html: string): string[] {
-  if (!html) return [];
-  const lines: string[] = [];
-  const liRe = /<li[^>]*>([\s\S]*?)<\/li>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = liRe.exec(html)) !== null) {
-    const raw = m[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
-    if (raw) lines.push(raw);
-  }
-  return lines;
-}
-
-async function generateRxSummaryPdf(caseNumber: string, shortSummary: string | null, bulletsHtml: string | null): Promise<Uint8Array | null> {
-  try {
-    const mod = await import("npm:pdf-lib@1.17.1");
-    const { PDFDocument, StandardFonts, rgb } = mod;
-    const pdf = await PDFDocument.create();
-    const page = pdf.addPage([612, 792]);
-    const font   = await pdf.embedFont(StandardFonts.Helvetica);
-    const bold   = await pdf.embedFont(StandardFonts.HelveticaBold);
-    const italic = await pdf.embedFont(StandardFonts.HelveticaOblique);
-    const NAVY = rgb(0.020, 0.125, 0.188);
-    const GOLD = rgb(0.702, 0.639, 0.412);
-    const SLATE = rgb(0.420, 0.467, 0.522);
-    const TEXT = rgb(0.122, 0.137, 0.157);
-    let y = 740;
-    page.drawRectangle({ x: 0, y: 760, width: 612, height: 32, color: NAVY });
-    page.drawText("SPECTRUM KILLIAN DENTAL LAB ALLIANCE", { x: 40, y: 770, size: 11, font: bold, color: rgb(1, 1, 1) });
-    page.drawText("RX SUMMARY", { x: 510, y: 770, size: 11, font: bold, color: GOLD });
-    page.drawText("Case " + caseNumber, { x: 40, y, size: 22, font: bold, color: NAVY });
-    y -= 26;
-    if (shortSummary) { page.drawText(shortSummary.slice(0, 90), { x: 40, y, size: 12, font: italic, color: SLATE }); y -= 22; } else { y -= 8; }
-    page.drawRectangle({ x: 40, y, width: 532, height: 2, color: GOLD });
-    y -= 22;
-    page.drawText("PRESCRIBED", { x: 40, y, size: 9, font: bold, color: SLATE });
-    y -= 16;
-    const bullets = htmlBulletsToText(bulletsHtml || "");
-    if (!bullets.length) {
-      page.drawText("(No RX summary on file for this case.)", { x: 40, y, size: 11, font: italic, color: SLATE });
-      y -= 16;
-    } else {
-      const maxChars = 92;
-      for (const b of bullets) {
-        const words = b.split(" ");
-        let line = "-  ";
-        for (const w of words) {
-          if ((line + w).length > maxChars) {
-            page.drawText(line, { x: 40, y, size: 10.5, font, color: TEXT });
-            y -= 14;
-            line = "    " + w + " ";
-            if (y < 80) break;
-          } else { line += w + " "; }
-        }
-        if (y < 80) break;
-        if (line.trim()) { page.drawText(line, { x: 40, y, size: 10.5, font, color: TEXT }); y -= 16; }
-      }
-    }
-    page.drawRectangle({ x: 40, y: 60, width: 532, height: 1, color: SLATE });
-    const footer = "Auto-generated summary of the RX on file with Spectrum Killian. Refer to the original RX in our system for the authoritative version.";
-    page.drawText(footer.slice(0, 110), { x: 40, y: 46, size: 8.5, font: italic, color: SLATE });
-    page.drawText(footer.slice(110, 220), { x: 40, y: 34, size: 8.5, font: italic, color: SLATE });
-    page.drawText("Generated " + new Date().toISOString().slice(0, 10), { x: 40, y: 20, size: 8, font, color: SLATE });
-    return await pdf.save();
-  } catch (e) { console.error("generateRxSummaryPdf failed:", e); return null; }
-}
-
 async function getRxAttachment(caseNumber: string): Promise<GraphAttachment | null> {
   try {
     const { data: row } = await sb.from("case_rx_attachments").select("storage_path, mime_type, source_filename").eq("case_number", caseNumber).maybeSingle();
@@ -220,15 +154,7 @@ async function getRxAttachment(caseNumber: string): Promise<GraphAttachment | nu
       }
     }
   } catch (e) { console.error("case_rx_attachments lookup failed:", e); }
-  try {
-    const { data: sum } = await sb.from("case_rx_summaries").select("issue_summary_short, bullets_html").eq("case_number", caseNumber).maybeSingle();
-    if (sum?.bullets_html) {
-      const pdfBytes = await generateRxSummaryPdf(caseNumber, sum.issue_summary_short ?? null, sum.bullets_html);
-      if (pdfBytes) {
-        return { "@odata.type": "#microsoft.graph.fileAttachment", name: `RX_Summary_${caseNumber}.pdf`, contentType: "application/pdf", contentBytes: bytesToBase64(pdfBytes) };
-      }
-    }
-  } catch (e) { console.error("case_rx_summaries lookup failed:", e); }
+  // No synthetic RX-summary PDF: we only ever attach a real RX file. If none is on the case, attach nothing.
   return null;
 }
 
@@ -321,7 +247,7 @@ async function uploadLargeAttachment(token: string, mailbox: string, messageId: 
   }
 }
 
-async function graphSendMail(to: string, subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null, cc?: string[] | null) {
+async function graphSendMail(to: string[], subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null, cc?: string[] | null) {
   const token = await graphToken();
   const fromMailbox = sender && sender.length > 3 ? sender : MS_SENDER_USER_ID;
   const tag = `[SKDLA-${caseNumber}]`;
@@ -329,7 +255,7 @@ async function graphSendMail(to: string, subject: string, html: string, caseNumb
   const messageBody: Record<string, unknown> = {
     subject: taggedSubject,
     body: { contentType: "HTML", content: html },
-    toRecipients: [{ emailAddress: { address: to } }],
+    toRecipients: to.map((a) => ({ emailAddress: { address: a } })),
     singleValueExtendedProperties: [{ id: "String {66f5a359-4659-4830-9070-00047ec6ac6e} Name SKDLACaseNumber", value: caseNumber }],
   };
   if (cc && cc.length) messageBody.ccRecipients = cc.map((a) => ({ emailAddress: { address: a } }));
@@ -358,7 +284,7 @@ function fmtDate(d: string | null | undefined): string {
 serve(async (_req) => {
   const log: any = { started_at: new Date().toISOString(), enqueued: 0, sent: 0, gated: 0, errors: [] };
   try {
-    const { data: approvedAttempts } = await sb.from("dr_outreach_attempts").select("id, queue_id, to_email, subject, body_html, sender_mailbox, cc_emails").eq("status", "queued").limit(50);
+    const { data: approvedAttempts } = await sb.from("dr_outreach_attempts").select("id, queue_id, to_email, to_emails, subject, body_html, sender_mailbox, cc_emails").eq("status", "queued").limit(50);
     for (const a of approvedAttempts ?? []) {
       try {
         const { data: q } = await sb.from("dr_outreach_queue").select("case_number, reason").eq("id", a.queue_id).single();
@@ -377,7 +303,9 @@ serve(async (_req) => {
         }
         // Merge in coordinator-uploaded attachments (inline if small, upload session if large).
         const { inline, large } = await buildAttachmentSets(autoAttachments, a.id);
-        const send = await graphSendMail(a.to_email, a.subject, a.body_html, q?.case_number ?? "approved", a.sender_mailbox, inline, large, a.cc_emails);
+        // Coordinator-editable To override (set_attempt_to); falls back to the composed to_email.
+        const toList = (Array.isArray(a.to_emails) && a.to_emails.length) ? a.to_emails : [a.to_email];
+        const send = await graphSendMail(toList, a.subject, a.body_html, q?.case_number ?? "approved", a.sender_mailbox, inline, large, a.cc_emails);
         await sb.from("dr_outreach_attempts").update({ status: "sent", graph_message_id: send.graph_message_id, graph_conversation_id: send.graph_conversation_id, sent_at: new Date().toISOString() }).eq("id", a.id);
         await sb.rpc("record_outbox_outbound", { p_case_number: q?.case_number, p_account_no: null, p_attempt_id: a.id, p_to_addr: a.to_email, p_subject: a.subject, p_body_html: a.body_html, p_graph_msg_id: send.graph_message_id });
         log.sent += 1;

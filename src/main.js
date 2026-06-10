@@ -40,6 +40,12 @@ let pasteTargetAttempt = null;
 // immediate send-attempt and the dr-outreach-tick cron) CC the same people.
 const ccByAttempt = {};
 
+// Coordinator-edited To recipients, keyed by attempt_id. Seeded from the attempt's persisted
+// to_emails (or the single composed to_email) on render and updated as the coordinator edits the
+// To input; persisted to the row via the set_attempt_to RPC just before approve/saveEdit so both
+// send paths address the same people. At least one valid address is required to send.
+const toByAttempt = {};
+
 // =====================================================================
 // Configuration
 // =====================================================================
@@ -62,6 +68,7 @@ const ANTHROPIC_DEFAULT_KEY = import.meta.env.VITE_ANTHROPIC_KEY ?? '';
 
 const REASON_LABEL = {
   design_approval: 'Design Approval',
+  design_approval_confirmation: 'Approval Confirmation (Thank You)',
   design_modification: 'Design Modification',
   missing_info: 'Missing Info',
   waiting_on_parts: 'Waiting on Parts',
@@ -538,6 +545,24 @@ function renderFeedback() {
   }).join('');
 }
 
+// After a successful submit/save, clear a form's fields so it's fresh for the next entry.
+// text/number/textarea -> empty; <select> -> first option (its placeholder); radio/checkbox ->
+// its HTML default. IDs listed in `todayIds` are date fields reset to today's Pacific date instead
+// of blanked. Radio GROUPS (which share a name, not an id) are reset via `radioNames`.
+function resetFormFields(ids = [], opts = {}) {
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.tagName === 'SELECT') el.selectedIndex = 0;
+    else if (el.type === 'radio' || el.type === 'checkbox') el.checked = el.defaultChecked;
+    else el.value = '';
+  });
+  (opts.radioNames || []).forEach(name => {
+    document.querySelectorAll('input[name="' + name + '"]').forEach(r => { r.checked = r.defaultChecked; });
+  });
+  (opts.todayIds || []).forEach(id => { const el = document.getElementById(id); if (el) el.value = pacificDate(); });
+}
+
 async function submitFeedback() {
   const message = document.getElementById('fb-message').value.trim();
   const category = document.getElementById('fb-category').value;
@@ -561,8 +586,7 @@ async function submitFeedback() {
       });
     }
     toast('Thanks! Feedback submitted.', 'ok');
-    document.getElementById('fb-message').value = '';
-    document.getElementById('fb-case').value = '';
+    resetFormFields(['fb-message', 'fb-case', 'fb-by', 'fb-category']);
     DraftGuard.clearMatching('fb-');   // submitted — drop the saved feedback draft
     await loadFeedback();
   } catch (e) {
@@ -634,12 +658,18 @@ function renderReady() {
   const srcLabel = {
     outreach: 'Outreach', casecoord: 'Case Coord', abs_advanced: 'ABS',
     reply_approved: 'Approved', reply_approved_mods: 'Approved + Mods, contact designer',
+    ai_parse_approved: 'Approved (AI)',
   };
+  // True for any row routed here purely by the AI thread-parse (no human-clicked approval). Flagged
+  // with a red asterisk + a footnote so coordinators know to sanity-check it.
+  let anyAi = false;
   const rows = sorted.map(r => {
     const days = daysAgo(r.waiting_since);
     const late = r.doctor_due_date && new Date(r.doctor_due_date) < new Date();
+    const isAi = r.ai_classified === true || r.approved_source === 'ai_parse_approved';
+    if (isAi) anyAi = true;
     const src = srcLabel[r.approved_source] || (r.approved_source || '');
-    const srcColor = r.approved_source === 'reply_approved_mods' ? 'var(--red)' : 'var(--green)';
+    const srcColor = (r.approved_source === 'reply_approved_mods' || isAi) ? 'var(--red)' : 'var(--green)';
     return `<tr>
       <td><span class="pan">${esc(r.pan_number || '-')}</span></td>
       <td><span class="case-sub">${esc(r.case_number)}</span></td>
@@ -648,10 +678,13 @@ function renderReady() {
       <td>${esc(r.dr_email || '-')}</td>
       <td>${days}d (${fmtDay(r.waiting_since)})</td>
       <td class="${late ? 'late' : ''}">${fmtDay(r.doctor_due_date)}${late ? ' ⚠' : ''}</td>
-      <td><span style="color: ${srcColor}; font-weight: 600;">${esc(src)}</span>${r.approved_on ? ' · ' + fmtDay(r.approved_on) : ''}</td>
+      <td><span style="color: ${srcColor}; font-weight: 600;">${esc(src)}${isAi ? ' <span class="ai-asterisk" title="Approval detected by AI from the communication thread (no coordinator-clicked Approved). Double-check before scanning.">*</span>' : ''}</span>${r.approved_on ? ' · ' + fmtDay(r.approved_on) : ''}</td>
     </tr>`;
   }).join('');
-  root.innerHTML = header + rows + '</tbody></table>';
+  const aiNote = anyAi
+    ? '<div class="ready-ai-note"><span class="ai-asterisk">*</span> Approval was detected by AI from the case\'s communication thread (a thank-you was already sent), not a coordinator-clicked Approved. Please double-check the thread before scanning.</div>'
+    : '';
+  root.innerHTML = header + rows + '</tbody></table>' + aiNote;
 }
 
 let reschedRows = [];
@@ -1610,15 +1643,31 @@ function collectCc(attemptId) {
   return { valid, invalid };
 }
 
+// Read the To input for a card, sync toByAttempt, and return the parsed valid addresses. Uses the
+// same parser/validation as CC (parseCcInput). A draft can't be sent with zero valid recipients.
+function collectTo(attemptId) {
+  const el = document.getElementById('to-' + attemptId);
+  const { valid, invalid } = parseCcInput(el ? el.value : (toByAttempt[attemptId] || []).join(', '));
+  toByAttempt[attemptId] = valid;
+  return { valid, invalid };
+}
+
+// True when the card's To field currently parses to at least one valid recipient — gates the send
+// buttons. Reads the live input if present, else the seeded toByAttempt state.
+function hasValidTo(attemptId) {
+  const el = document.getElementById('to-' + attemptId);
+  const raw = el ? el.value : (toByAttempt[attemptId] || []).join(', ');
+  return parseCcInput(raw).valid.length > 0;
+}
+
 // Drop zone + uploaded-file chips at the bottom of an outbound/approval email card.
 function renderAttachZone(attemptId) {
   if (!attemptId) return '';
   const files = attachmentsByAttempt[attemptId] || [];
   const uploading = !!uploadingByAttempt[attemptId];
-  // An RX PDF is required to send on real case drafts; scan-submission acks are exempt
-  // (they carry the job-aid PDF instead). Highlight the zone while no PDF is attached.
-  const row = findOutboundRow(attemptId);
-  const rxRequired = !!row && row.reason !== 'scan_submission_ack' && !files.length;
+  // RX attachment is OPTIONAL (no longer gates sending). The zone stays available for a
+  // coordinator to attach the RX when they want to, but is never flagged as "required".
+  const rxRequired = false;
   const chips = files.map(f => `
     <span class="attach-file-chip" title="${esc(f.filename)}">
       <span class="attach-file-name">📄 ${esc(f.filename)}</span>
@@ -1693,6 +1742,23 @@ document.addEventListener('paste', handleAttachPaste);
 function onCcInput(attemptId) {
   const { invalid } = collectCc(attemptId);
   if (invalid.length) toast('Ignoring invalid CC address' + (invalid.length > 1 ? 'es' : '') + ': ' + invalid.join(', '), 'err');
+}
+
+// To input change/blur: parse + dedupe the typed recipients into toByAttempt, warn (once) on any
+// invalid token, then re-render the outbound lists so the send-button gate reflects whether the
+// field now holds at least one valid recipient. Persistence to the row happens at approve/saveEdit.
+function onToInput(attemptId) {
+  const { invalid } = collectTo(attemptId);
+  if (invalid.length) toast('Ignoring invalid recipient' + (invalid.length > 1 ? 's' : '') + ': ' + invalid.join(', '), 'err');
+  rerenderOutboundLists();
+}
+
+// Persist a To list onto an attempt via the set_attempt_to RPC (SECURITY DEFINER — the frontend
+// uses the publishable key). Best-effort, mirroring persistCc: a failure shouldn't abort the send.
+async function persistTo(attemptId, to) {
+  try {
+    await callRpc('set_attempt_to', { p_attempt_id: attemptId, p_to_emails: (Array.isArray(to) && to.length) ? to : null });
+  } catch (e) { console.error('set_attempt_to failed:', e); }
 }
 
 async function uploadAttachments(files, attemptId) {
@@ -1808,6 +1874,11 @@ function renderOutboundCard(r) {
     const rxOk = isScanAck || hasRx;
     // Persisted CC list for this attempt (seeds the CC input, kept in sync via ccByAttempt).
     const ccList = ccByAttempt[r.attempt_id] || (Array.isArray(r.cc_emails) ? r.cc_emails : []);
+    // Editable To recipients: coordinator edits in toByAttempt, else the persisted to_emails
+    // override, else the single composed to_email. At least one valid recipient is required to send.
+    const toList = toByAttempt[r.attempt_id]
+      || (Array.isArray(r.to_emails) && r.to_emails.length ? r.to_emails : (r.to_email ? [r.to_email] : []));
+    const toOk = parseCcInput(toList.join(', ')).valid.length > 0;
     // Exocad link presence — gate sends if missing
     const hasExocadLink = !!(r.exocad_viewer_url && /^https?:\/\//i.test(r.exocad_viewer_url));
     const linkOk = hasExocadLink || isScanAck;
@@ -1881,7 +1952,7 @@ function renderOutboundCard(r) {
           ${callForNowChip}
           ${activityChip}
           ${missChip}
-          <div class="who">${who} → <strong>${esc(r.to_email)}</strong></div>
+          <div class="who">${who} → <strong>${esc(toList[0] || '—')}</strong>${toList.length > 1 ? ` <span class="to-more">+${toList.length - 1} more</span>` : ''}</div>
           <div class="subject">${esc(r.subject)}</div>
         </div>
         <div class="meta">
@@ -1901,6 +1972,14 @@ function renderOutboundCard(r) {
             ${buildOutboundBody(r.body_html, r.exocad_viewer_url)}
             ${isAspenScan ? `<div class="attach-row" title="This PDF is attached automatically by the sender when you Approve &amp; Send — it is not stored on the draft, so it only appears on the email that goes out."><span class="attach-clip">📎</span> Onix Fixed ordering in AspenLabs.pdf <span class="attach-note">(attached on send)</span></div>` : ''}
             ${renderAttachZone(r.attempt_id)}
+            <div class="cc-field to-field${toOk ? '' : ' to-empty'}" onclick="event.stopPropagation();">
+              <label for="to-${r.attempt_id}">To</label>
+              <input type="text" id="to-${r.attempt_id}" autocomplete="off"
+                     placeholder="name@example.com, another@example.com"
+                     value="${esc(toList.join(', '))}"
+                     onchange="onToInput('${r.attempt_id}')" onblur="onToInput('${r.attempt_id}')" />
+              <div class="cc-hint">${toOk ? "Who the email is sent to. Separate multiple recipients with a comma or a space." : '⚠ Add at least one valid recipient before sending.'}</div>
+            </div>
             <div class="cc-field" onclick="event.stopPropagation();">
               <label for="cc-${r.attempt_id}">CC (optional)</label>
               <input type="text" id="cc-${r.attempt_id}" autocomplete="off"
@@ -1933,8 +2012,8 @@ function renderOutboundCard(r) {
         </div>
         ${linkOk ? '' : `
           <div class="link-gate">
-            <div class="link-gate-title">⚠ This draft can't be sent yet — no exocad viewer link on file for case ${esc(r.case_number)}.</div>
-            <div class="link-gate-sub">The link sync agent didn't find a webview URL in this case's folder. Paste one below to unblock the send, or wait for the next sync if the design team is still uploading.</div>
+            <div class="link-gate-title">No exocad viewer link on file for case ${esc(r.case_number)} (optional).</div>
+            <div class="link-gate-sub">The link sync agent didn't find a webview URL in this case's folder. You can still send without it — paste one below to include the design link in the email, or wait for the next sync if the design team is still uploading.</div>
             <div class="link-gate-row">
               <input type="text" id="exocad-input-${r.attempt_id}" placeholder="https://webview.exocad.com/v/..." autocomplete="off" />
               <button class="act approve" onclick="saveExocadLink('${esc(r.case_number)}', document.getElementById('exocad-input-${r.attempt_id}').value)">Save link</button>
@@ -1943,8 +2022,9 @@ function renderOutboundCard(r) {
         `}
         <div class="actions">
           ${hasExocadLink ? `<button class="act view-exocad" onclick="window.open('${esc(r.exocad_viewer_url)}', '_blank', 'noopener')">View in Exocad</button>` : ''}
-          <button class="act approve" onclick="approve('${r.attempt_id}')" ${needsCompose ? 'disabled title="Write the email first — use Edit Then Send"' : (!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : (!rxOk ? 'disabled title="Attach the RX PDF first"' : '')))}>Approve &amp; Send</button>
-          <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${!linkOk ? 'disabled title="Add the exocad viewer link first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : (!rxOk ? 'disabled title="Attach the RX PDF first"' : ''))}>Edit Then Send</button>
+          <button class="act approve" onclick="approve('${r.attempt_id}')" ${!toOk ? 'disabled title="Add at least one valid recipient first"' : (needsCompose ? 'disabled title="Write the email first — use Edit Then Send"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : ''))}>Approve &amp; Send</button>
+          <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${!toOk ? 'disabled title="Add at least one valid recipient first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : '')}>Edit Then Send</button>
+          <button class="act slate" onclick="openDraftReselect('${r.attempt_id}', '${esc(r.case_number || '')}')" title="Replace this draft with a fresh one from a different template">Select draft</button>
           <button class="act reject" onclick="reject('${r.attempt_id}')">Reject</button>
           ${isScanAck ? '' : `<button class="act ghost" style="margin-left:auto;color:var(--charcoal);" onclick="gotoCaseLookup('${esc(r.case_number)}')">Lookup Case</button>`}
         </div>
@@ -1967,7 +2047,7 @@ function renderOutboundCard(r) {
           <label>Reason for edit (optional)</label>
           <input type="text" id="note-${r.attempt_id}" placeholder="e.g. tighter copy, doctor prefers first name" />
           <div class="actions">
-            <button class="act approve" onclick="saveEdit('${r.attempt_id}')" ${!rxOk ? 'disabled title="Attach the RX PDF first"' : ''}>Save &amp; Send</button>
+            <button class="act approve" onclick="saveEdit('${r.attempt_id}')" ${!toOk ? 'disabled title="Add at least one valid recipient first"' : ''}>Save &amp; Send</button>
             <button class="act slate" onclick="hideEdit('${r.attempt_id}')">Cancel</button>
           </div>
         </div>
@@ -2333,14 +2413,15 @@ function renderFullArchWipCard(r) {
 // The reasons offered by the "Draft outreach email" picker — every reason that has at least one
 // dr_outreach_templates row, design_approval first. Selecting one composes that template's attempt.
 const OUTREACH_REASON_OPTIONS = [
-  'design_approval', 'design_modification', 'missing_info', 'waiting_on_parts',
-  'late_approval_notice', 'reschedule_check', 'scan_submission_ack',
+  'design_approval', 'design_approval_confirmation', 'design_modification', 'missing_info',
+  'waiting_on_parts', 'late_approval_notice', 'reschedule_check', 'scan_submission_ack',
 ];
 
 // A blank summary still needs to fill the template's {{issue_summary}} placeholder, so fall back to
 // a sensible per-reason default the coordinator can edit on the drafted card.
 const OUTREACH_REASON_DEFAULT_SUMMARY = {
   design_approval: 'Full Arch design approval',
+  design_approval_confirmation: 'Design approved - in production',
   design_modification: 'Revised design for approval',
   missing_info: 'Information needed to proceed',
   waiting_on_parts: 'Awaiting parts / models',
@@ -2355,6 +2436,8 @@ const OUTREACH_REASON_DEFAULT_SUMMARY = {
 function openOutreachReasonPicker(caseNumber) {
   const modal = document.getElementById('outreach-reason-modal');
   if (!modal) return;
+  delete modal.dataset.attemptId;   // no-draft compose mode (not a regenerate)
+  setOutreachPickerMode(modal, false);
   modal.dataset.caseNumber = caseNumber || '';
   const pill = document.getElementById('orp-case-pill');
   if (pill) pill.textContent = caseNumber ? 'Case ' + caseNumber : '';
@@ -2378,17 +2461,74 @@ function closeOutreachReasonPicker() {
   document.getElementById('outreach-reason-modal')?.classList.remove('open');
 }
 
+// Toggle the reason picker between its two modes. Regenerate mode (an existing draft is being
+// replaced) hides the summary/details fields — the recomposed template derives its own issue
+// summary from case data — and relabels the header + action button.
+function setOutreachPickerMode(modal, regenerate) {
+  const header = modal.querySelector('.modal-header h3');
+  const btn = document.getElementById('orp-draft-btn');
+  const summaryField = document.getElementById('orp-summary')?.closest('.cn-field');
+  const detailsField = document.getElementById('orp-details')?.closest('.cn-field');
+  if (summaryField) summaryField.style.display = regenerate ? 'none' : '';
+  if (detailsField) detailsField.style.display = regenerate ? 'none' : '';
+  if (header) header.firstChild && (header.firstChild.textContent =
+    (regenerate ? 'Select a different draft ' : 'Draft outreach email '));
+  if (btn) btn.textContent = regenerate ? 'Replace draft' : 'Draft email';
+}
+
+// "Select draft" on an existing draft card: open the same reason picker in regenerate mode, bound
+// to this attempt. Choosing a template supersedes the current draft and recomposes (see
+// recompose_attempt_with_reason). caseNumber is shown in the pill only (scan-acks may have none).
+function openDraftReselect(attemptId, caseNumber) {
+  const modal = document.getElementById('outreach-reason-modal');
+  if (!modal) return;
+  modal.dataset.attemptId = attemptId || '';
+  modal.dataset.caseNumber = caseNumber || '';
+  setOutreachPickerMode(modal, true);
+  const pill = document.getElementById('orp-case-pill');
+  if (pill) pill.textContent = caseNumber ? 'Case ' + caseNumber : '';
+  const sel = document.getElementById('orp-reason');
+  if (sel) {
+    sel.innerHTML = OUTREACH_REASON_OPTIONS
+      .map(r => `<option value="${r}">${esc(REASON_LABEL[r] || r)}</option>`).join('');
+    sel.value = 'design_approval';
+  }
+  const btn = document.getElementById('orp-draft-btn');
+  if (btn) btn.disabled = false;
+  modal.classList.add('open');
+  setTimeout(() => document.getElementById('orp-reason')?.focus(), 60);
+}
+
+// Regenerate path for the reason picker: supersede the bound attempt's current draft and recompose
+// from the chosen template reason, then refresh the outbound lists. Returns true on success.
+async function recomposeDraftForAttempt(attemptId, reason) {
+  try {
+    await callRpc('recompose_attempt_with_reason', { p_attempt_id: attemptId, p_reason: reason });
+    toast('Draft replaced — review it below', 'ok');
+    await loadOutbound();
+    return true;
+  } catch (e) {
+    toast('Could not replace draft: ' + (e?.message || e), 'err');
+    return false;
+  }
+}
+
 // Draft button in the reason picker: read the chosen reason + optional summary/details and compose.
 async function submitOutreachReason() {
   const modal = document.getElementById('outreach-reason-modal');
   if (!modal) return;
+  const attemptId = modal.dataset.attemptId || '';
   const caseNumber = modal.dataset.caseNumber || '';
   const reason  = document.getElementById('orp-reason')?.value || 'design_approval';
   const summary = (document.getElementById('orp-summary')?.value || '').trim();
   const details = (document.getElementById('orp-details')?.value || '').trim();
   const btn = document.getElementById('orp-draft-btn');
   if (btn) btn.disabled = true;
-  const ok = await composeOutreachForCase(caseNumber, { reason, summary, details });
+  // Regenerate mode (Select draft on an existing card) supersedes + recomposes the bound attempt;
+  // otherwise this is the no-draft compose path keyed by case number.
+  const ok = attemptId
+    ? await recomposeDraftForAttempt(attemptId, reason)
+    : await composeOutreachForCase(caseNumber, { reason, summary, details });
   if (ok) closeOutreachReasonPicker();
   else if (btn) btn.disabled = false;
 }
@@ -3116,14 +3256,9 @@ function hideEdit(id) {
   DraftGuard.clearMatching(id);
 }
 
-// Hard RX gate before a send. Real case drafts require an attached RX PDF; scan-submission
-// acks are exempt (they carry the job-aid PDF, not an RX). Returns false — blocking the
-// send — when the RX is missing, otherwise asks the coordinator to confirm.
+// Confirm a send. The RX attachment is OPTIONAL (no longer gates sending), so this just asks
+// the coordinator to confirm. The recipient (To) gate is enforced separately in approve/saveEdit.
 function confirmSend(id, confirmMsg) {
-  if (!rxAttachedOrExempt(id)) {
-    toast('Attach the RX PDF before sending', 'err');
-    return false;
-  }
   return confirm(confirmMsg);
 }
 
@@ -3135,11 +3270,15 @@ function rxAttachedOrExempt(id) {
 }
 
 async function approve(id) {
+  // Hard recipient gate: a draft can't be sent without at least one valid To address.
+  const { valid: to } = collectTo(id);
+  if (!to.length) { toast('Add at least one valid recipient before sending', 'err'); return; }
   if (!confirmSend(id, 'Approve and send this email now?')) return;
-  // Persist the typed CC list onto the attempt BEFORE approving, so both send paths (the
-  // immediate send-attempt below and the dr-outreach-tick cron fallback) CC the same people.
+  // Persist the typed To + CC lists onto the attempt BEFORE approving, so both send paths (the
+  // immediate send-attempt below and the dr-outreach-tick cron fallback) address the same people.
   const { valid: cc } = collectCc(id);
   try {
+    await persistTo(id, to);
     await persistCc(id, cc);
     await callRpc('approve_attempt', { p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name), p_note: null });
     // Send this one draft immediately (in seconds) instead of waiting for the 5-min
@@ -3240,16 +3379,18 @@ async function reject(id) {
   } catch (e) {}
 }
 async function saveEdit(id) {
-  // Hard RX gate (same as Approve & Send): real case drafts need an attached RX PDF.
-  if (!rxAttachedOrExempt(id)) { toast('Attach the RX PDF before sending', 'err'); return; }
+  // Hard recipient gate (same as Approve & Send): at least one valid To address.
+  const { valid: to } = collectTo(id);
+  if (!to.length) { toast('Add at least one valid recipient before sending', 'err'); return; }
   const subject = document.getElementById('subject-' + id).value;
   // contenteditable div ·innerHTML preserves bullets, bold, links, etc.
   const body    = document.getElementById('body-' + id).innerHTML;
   const note    = document.getElementById('note-' + id).value;
-  // This path only queues the draft; the dr-outreach-tick cron sends it. Persist CC onto the
-  // row first so the cron CCs the typed addresses.
+  // This path only queues the draft; the dr-outreach-tick cron sends it. Persist To + CC onto the
+  // row first so the cron addresses the typed recipients.
   const { valid: cc } = collectCc(id);
   try {
+    await persistTo(id, to);
     await persistCc(id, cc);
     await callRpc('edit_and_approve_attempt', {
       p_attempt_id: id, p_reviewer: (loginIdentity().email || loginIdentity().name),
@@ -4092,10 +4233,8 @@ async function submitRequest() {
       '<strong>Request submitted.</strong> The bot has drafted the email. ' +
       'Check the <strong>Pending Outbound</strong> tab ·a coordinator will review and approve before sending.' +
       '</div>';
-    // Reset form fields
-    document.getElementById('req-case').value = '';
-    document.getElementById('req-summary').value = '';
-    document.getElementById('req-details').value = '';
+    // Reset form fields (including the reason/priority radios) for the next entry.
+    resetFormFields(['req-case', 'req-summary', 'req-details'], { radioNames: ['req-reason', 'req-priority'] });
     await loadOutbound();
   } catch (err) {
     resultEl.innerHTML =
@@ -5114,9 +5253,9 @@ async function addCaseToTracker() {
       notes: notes || undefined,
     });
     toast('Case saved', 'ok');
-    document.getElementById('track-case-id').value = '';
-    document.getElementById('track-patient').value = '';
-    document.getElementById('track-form-notes').value = '';
+    resetFormFields(
+      ['track-case-id', 'track-patient', 'track-form-notes', 'track-form-workflow', 'track-form-stage', 'track-form-coord'],
+      { todayIds: ['track-form-date'] });
     await reloadCcData();
   } catch (e) {
     toast('Save failed: ' + (e.message || e), 'err');
@@ -5341,9 +5480,9 @@ async function submitLog() {
       stage_updated_date: dt || pacificDate(),
     });
     toast('Log saved', 'ok');
-    document.getElementById('log-case-id').value = '';
-    document.getElementById('log-notes').value   = '';
-    document.getElementById('log-patient').value = '';
+    resetFormFields(
+      ['log-case-id', 'log-notes', 'log-patient', 'log-action-type', 'log-coordinator', 'log-workflow', 'log-stage'],
+      { todayIds: ['log-date'] });
     await reloadCcData();
   } catch (e) {
     toast('Save failed: ' + (e.message || e), 'err');
@@ -6561,6 +6700,7 @@ Object.assign(window, {
   // Outbound actions
   toggleItem, approve, showEdit, hideEdit, resummarize, reject, saveEdit, saveExocadLink,
   composeOutreachForCase, openOutreachReasonPicker, closeOutreachReasonPicker, submitOutreachReason,
+  onToInput, onCcInput, openDraftReselect,
   // Inbound actions
   classifyReply, manuallyLinkReply, escalateForCall, markReplyNoCase,
   // Reschedule filters / actions
