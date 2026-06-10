@@ -91,7 +91,9 @@ function optionList(arr, selected, placeholder) {
 
 // ── public entry ────────────────────────────────────────────────────
 export function renderQcMode() {
-  // Land on a tab the user is allowed to see (e.g. dept_lead opens straight to Internal Remake).
+  // Restore the last tab the user was on across reloads, then fall back to a permitted
+  // one (e.g. dept_lead opens straight to Internal Remake).
+  try { const t = localStorage.getItem('qc_active_tab'); if (t && canSeeTab(t)) state.activeTab = t; } catch {}
   if (!canSeeTab(state.activeTab)) state.activeTab = firstAllowedTab();
   render();
   ensureRecentLoaded();
@@ -351,7 +353,7 @@ async function refreshMrb() {
 }
 
 // ── handlers (window.QCMODE) ────────────────────────────────────────
-function setTab(tab) { if (!canSeeTab(tab)) return; state.activeTab = tab; render(); ensureRecentLoaded(); }
+function setTab(tab) { if (!canSeeTab(tab)) return; state.activeTab = tab; try { localStorage.setItem('qc_active_tab', tab); } catch {} render(); ensureRecentLoaded(); }
 function setStep(step) { state.step = step; render(); }
 function setQc(k, v) {
   state.qc[k] = v;
