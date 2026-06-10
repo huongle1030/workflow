@@ -3099,6 +3099,15 @@ function renderAudit() {
 function toggleItem(id) {
   const el = document.querySelector(`.item[data-id="${id}"]`);
   if (el) el.classList.toggle('expanded');
+  persistExpandedItems();
+}
+
+// Remember which case cards are expanded so a reload re-opens the same ones.
+function persistExpandedItems() {
+  try {
+    const ids = Array.from(document.querySelectorAll('.item.expanded')).map(e => e.dataset.id).filter(Boolean);
+    localStorage.setItem('skdla_expanded', JSON.stringify(ids));
+  } catch {}
 }
 function showEdit(id) { document.getElementById('edit-' + id).classList.add('shown'); }
 function hideEdit(id) {
@@ -3961,6 +3970,7 @@ function applyPermissions() {
 // switchMode/applyPermissions. Ignores tabs the role can't open.
 function activateOutreachTab(which) {
   if (!isOutreachTabPermitted(which)) return;
+  try { localStorage.setItem('skdla_outreach_tab', which); } catch {}   // remember the tab across reloads
   const groupKey = groupKeyForChild(which);
   // Top-level active state: the parent when a sub-tab is active, else the tab itself.
   document.querySelectorAll('#tabs-outreach .tab').forEach(t => t.classList.remove('active'));
@@ -4033,6 +4043,7 @@ document.querySelectorAll('#tabs-cc .tab').forEach(tab => {
     document.querySelectorAll('#tabs-cc .tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     const which = 'cc-' + tab.dataset.ccTab;
+    try { localStorage.setItem('skdla_cc_tab', tab.dataset.ccTab); } catch {}   // remember across reloads
     CC_PANELS.forEach(p => {
       document.getElementById('panel-' + p).classList.toggle('hidden', p !== which);
     });
@@ -6031,6 +6042,51 @@ function positionTour() {
 // =====================================================================
 // Boot
 // =====================================================================
+// Restore the last mode + tab the user was in before a reload. Falls back to the
+// landing/home page for first-time visitors or anyone who was already on Home.
+function restoreNavMode() {
+  // Read the remembered tab BEFORE switchMode() runs — switchMode lands on the mode's
+  // default tab and overwrites skdla_outreach_tab, so reading it afterwards would always
+  // return the default (e.g. the Dashboard tab) instead of where the user actually was.
+  let saved = null, savedOutreachTab = null, savedCcTab = null;
+  try {
+    saved = localStorage.getItem('skdla_mode');
+    savedOutreachTab = localStorage.getItem('skdla_outreach_tab');
+    savedCcTab = localStorage.getItem('skdla_cc_tab');
+  } catch {}
+  const mode = (saved && isModePermitted(saved)) ? saved : 'landing';
+  switchMode(mode);
+  try {
+    if (mode === 'outreach') {
+      if (savedOutreachTab && isOutreachTabPermitted(savedOutreachTab)) activateOutreachTab(savedOutreachTab);
+    } else if (mode === 'cc') {
+      const el = savedCcTab && document.querySelector(`#tabs-cc .tab[data-cc-tab="${savedCcTab}"]`);
+      if (el && !el.classList.contains('hidden')) el.click();
+    }
+  } catch {}
+}
+
+// One-shot scroll restore after the initial data load, so the page lands where the
+// user left off. Runs once per boot; the 60s refresh keeps its own in-memory scroll.
+let _scrollRestored = false;
+function restoreScrollOnce() {
+  if (_scrollRestored) return;
+  _scrollRestored = true;
+  let expanded = [], y = 0;
+  try { expanded = JSON.parse(localStorage.getItem('skdla_expanded') || '[]'); } catch {}
+  try { y = parseInt(localStorage.getItem('skdla_scroll') || '0', 10) || 0; } catch {}
+  // Frame 1: re-open the case cards (and any drafted editors) the user had open, so the
+  // page has the right height. Frame 2: scroll back to where they were.
+  requestAnimationFrame(() => {
+    for (const id of expanded) {
+      const el = document.querySelector(`.item[data-id="${CSS.escape(id)}"]`);
+      if (el) el.classList.add('expanded');
+    }
+    openEditFormsWithDrafts();
+    requestAnimationFrame(() => { if (y > 0) window.scrollTo({ top: y, behavior: 'auto' }); });
+  });
+}
+
 let _bootRan = false;
 function boot() {
   if (_bootRan) return;
@@ -6043,20 +6099,33 @@ function boot() {
   // never leak across accounts on a shared browser profile.
   DraftGuard.install({ namespace: () => loginIdentity().email || 'anon' });
 
+  // Remember the scroll position so a reload can return the user to the same spot.
+  let _scrollSaveTimer = null;
+  const saveScrollNow = () => { try { localStorage.setItem('skdla_scroll', String(window.scrollY)); } catch {} };
+  window.addEventListener('scroll', () => {
+    if (_scrollSaveTimer) clearTimeout(_scrollSaveTimer);
+    _scrollSaveTimer = setTimeout(saveScrollNow, 150);
+  }, { passive: true });
+  // Flush immediately if the tab is closing/hidden, so a reload right after scrolling
+  // still lands at the latest position.
+  window.addEventListener('pagehide', saveScrollNow);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveScrollNow(); });
+
   if (!inCowork && !getConfig().key) {
     openConfig();
   } else {
-    loadAll();   // restoreUiContext() re-applies any saved drafts after the first paint
+    // restoreUiContext() re-applies saved drafts after the first paint; then put the
+    // user back at their last scroll position (once the lists have height to scroll to).
+    loadAll().then(restoreScrollOnce);
     setInterval(loadAll, 60_000);
   }
 
   // Show the hidden-sender count chip immediately, even before data loads
   if (typeof renderHiddenSendersList === 'function') renderHiddenSendersList();
 
-  // Every role boots into the landing/home page (one card per app the role can
-  // open). They pick an app from there; the brand switcher still lets them jump
-  // directly or return Home. (Ungated — isModePermitted('landing') is always true.)
-  switchMode('landing');
+  // Return the user to whatever mode/tab they were last in (so a reload doesn't dump
+  // them back on Home). First-time visitors — and anyone who was on Home — get landing.
+  restoreNavMode();
 
   // Hide modes/tabs this role isn't allowed to see. Runs after switchMode so the
   // switcher items + outreach tabs reflect the role. landing stays visible (it has

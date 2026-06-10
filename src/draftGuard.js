@@ -133,6 +133,9 @@ function onEdit(e) {
 }
 
 // ---- public API ------------------------------------------------------
+let applying = 0;            // >0 while restore() is writing — suppresses observer re-entry (depth-counted)
+let restoreScheduled = false;
+
 function install(opts = {}) {
   if (typeof opts.namespace === 'function') nsGetter = opts.namespace;
   if (installed) { loadStore(); return; }
@@ -146,17 +149,39 @@ function install(opts = {}) {
   window.addEventListener('pagehide', flush);
   window.addEventListener('beforeunload', flush);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
+  // Auto-restore on ANY DOM rebuild — covers every render path (tab navigation, mode
+  // switch, the 60s loadAll, manual refreshes) without each one having to call restore().
+  if (typeof MutationObserver === 'function') {
+    const obs = new MutationObserver(scheduleRestore);
+    const start = () => obs.observe(document.body, { childList: true, subtree: true });
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start);
+  }
+}
+
+// Coalesce a burst of mutations into a single restore on the next frame.
+function scheduleRestore() {
+  if (restoreScheduled || applying > 0) return;
+  restoreScheduled = true;
+  const run = () => { restoreScheduled = false; restore(document); };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+  else setTimeout(run, 0);
 }
 
 // Re-apply every stored draft for the current user into matching fields under `root`.
 function restore(root) {
   root = root || document;
   const b = bucket();
-  for (const key of Object.keys(b)) {
-    const entry = b[key];
-    if (!entry) continue;
-    const el = findField(root, key);
-    if (el && !matches(el, entry)) applyEntry(el, entry);
+  applying++;   // suppress the MutationObserver while we write (applyEntry mutates the DOM)
+  try {
+    for (const key of Object.keys(b)) {
+      const entry = b[key];
+      if (!entry) continue;
+      const el = findField(root, key);
+      if (el && !matches(el, entry)) applyEntry(el, entry);
+    }
+  } finally {
+    applying--;
   }
 }
 

@@ -128,6 +128,14 @@ async function load() {
       if (!c.method) { const r = classifyMethod(c); c.method = r.method; c.methodUncertain = r.uncertain; }
     });
     state.loaded = true;
+    // Reopen the case modal the user had open before a reload, if it still exists.
+    if (state.openCaseNum == null) {
+      try {
+        const saved = localStorage.getItem('nest_open_case');
+        const hit = saved ? state.cases.find(c => String(c.caseNumber) === saved) : null;
+        if (hit) state.openCaseNum = hit.caseNumber;
+      } catch {}
+    }
   } catch (e) {
     state.error = e && e.message ? e.message : String(e);
   } finally {
@@ -271,13 +279,21 @@ function setFilter(side, kind, value) {
   state.filters[side][kind] = value;
   draw();
 }
-function openCase(caseNum) { state.openCaseNum = caseNum; draw(); }
-function closeCase() { state.openCaseNum = null; draw(); }
+function openCase(caseNum) {
+  state.openCaseNum = caseNum;
+  try { localStorage.setItem('nest_open_case', String(caseNum)); } catch {}   // reopen on reload
+  draw();
+}
+function closeCase() {
+  state.openCaseNum = null;
+  try { localStorage.removeItem('nest_open_case'); } catch {}
+  draw();
+}
 
 // Close the modal on Escape.
 if (typeof document !== 'undefined') {
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.openCaseNum) { state.openCaseNum = null; draw(); }
+    if (e.key === 'Escape' && state.openCaseNum) { closeCase(); }
   });
 }
 

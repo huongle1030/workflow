@@ -90,6 +90,18 @@ function modeForStage(stage) { return Object.keys(MODES).find(m => (MODES[m].sta
 
 export async function renderCaseFlowMode(mode) {
   if (!loaded) { await reload(); }
+  // After a reload, reopen the case detail the user was last viewing in this mode
+  // (selection state is in-memory, so it's gone until we rehydrate it from storage).
+  if (selectedCaseId === null) {
+    try {
+      const sm = localStorage.getItem('cf_sel_mode');
+      const sc = localStorage.getItem('cf_sel_case');
+      // Match loosely (the stored id is a string; case ids may be numeric) and set the
+      // real id back so getC()'s strict === keeps working afterwards.
+      const hit = (sm === mode && sc) ? cases.find(x => String(x.id) === sc) : null;
+      if (hit) { selectedMode = sm; selectedCaseId = hit.id; }
+    } catch {}
+  }
   renderMode(mode);
 }
 
@@ -302,9 +314,15 @@ function setCrTab(t) { crTab = t; renderMode('casereview'); }
 function openCase(mode, id) {
   if (selectedMode && selectedMode !== mode) { const prev = selectedMode; selectedMode = null; renderMode(prev); }
   selectedMode = mode; selectedCaseId = id; qcSel = null; adjSel = null;
+  // Remember the open case so a reload reopens this detail (not just the queue).
+  try { localStorage.setItem('cf_sel_mode', mode); localStorage.setItem('cf_sel_case', String(id)); } catch {}
   renderMode(mode);
 }
-function goBack(mode) { selectedCaseId = null; renderMode(mode); }
+function goBack(mode) {
+  selectedCaseId = null;
+  try { localStorage.removeItem('cf_sel_mode'); localStorage.removeItem('cf_sel_case'); } catch {}
+  renderMode(mode);
+}
 
 // advanceStage: update stage, log event, persist, keep detail open (faithful).
 function advanceStage(id, ns, log, by) {
