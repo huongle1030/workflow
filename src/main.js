@@ -1635,6 +1635,36 @@ function parseCcInput(raw) {
   return { valid, invalid };
 }
 
+// Default CC seeding for a fresh draft so the coordinator doesn't retype the standing CC
+// list every time. Two sources, unioned and deduped case-insensitively:
+//   1) emails written into the account's design preferences (account_preferences.design_notes,
+//      surfaced as r.account_preferences) — coordinators jot CC lists there as free text.
+//   2) whoever the doctor originally CC'd on the most recent inbound email (r.most_recent_comm_cc),
+//      so a reply keeps those people in the loop — unless already covered by (1).
+// Account-preference emails are added first, so on a dupe they win over the inbound copy. The
+// To recipient(s) and our own shared mailboxes are dropped so we never CC the addressee or
+// ourselves. Returns a deduped string[]; the field stays fully editable after prefill.
+function ccPrefill(r) {
+  const out = [], seen = new Set(), drop = new Set();
+  const block = (e) => { const k = String(e || '').trim().toLowerCase(); if (k) drop.add(k); };
+  block(r.to_email);
+  (Array.isArray(r.to_emails) ? r.to_emails : []).forEach(block);
+  ['implants@skdla.com', 'clearchoice@skdla.com'].forEach(block);
+  const add = (e) => {
+    const v = String(e || '').trim();
+    const k = v.toLowerCase();
+    if (!v || drop.has(k) || seen.has(k)) return;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return;
+    seen.add(k); out.push(v);
+  };
+  // (1) every email mentioned in the account-preference notes.
+  const prefRx = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+  (String(r.account_preferences || '').match(prefRx) || []).forEach(add);
+  // (2) original inbound CC recipients (text[]).
+  (Array.isArray(r.most_recent_comm_cc) ? r.most_recent_comm_cc : []).forEach(add);
+  return out;
+}
+
 // Read the CC input for a card, sync ccByAttempt, and return the parsed valid addresses.
 function collectCc(attemptId) {
   const el = document.getElementById('cc-' + attemptId);
@@ -1872,8 +1902,11 @@ function renderOutboundCard(r) {
     // Scan-submission acks are exempt (they carry the job-aid PDF, not an RX).
     const hasRx = (attachmentsByAttempt[r.attempt_id] || []).length > 0;
     const rxOk = isScanAck || hasRx;
-    // Persisted CC list for this attempt (seeds the CC input, kept in sync via ccByAttempt).
-    const ccList = ccByAttempt[r.attempt_id] || (Array.isArray(r.cc_emails) ? r.cc_emails : []);
+    // CC list seeding the input: a coordinator's in-progress edit wins, then any CC already
+    // persisted on the attempt, otherwise prefill from account preferences + the original
+    // inbound CC (see ccPrefill). Kept in sync via ccByAttempt once the coordinator touches it.
+    const ccList = ccByAttempt[r.attempt_id]
+      || (Array.isArray(r.cc_emails) && r.cc_emails.length ? r.cc_emails : ccPrefill(r));
     // Editable To recipients: coordinator edits in toByAttempt, else the persisted to_emails
     // override, else the single composed to_email. At least one valid recipient is required to send.
     const toList = toByAttempt[r.attempt_id]

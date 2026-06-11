@@ -247,22 +247,52 @@ async function uploadLargeAttachment(token: string, mailbox: string, messageId: 
   }
 }
 
-async function graphSendMail(to: string[], subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null, cc?: string[] | null) {
+async function graphSendMail(to: string[], subject: string, html: string, caseNumber: string, sender?: string | null, attachments?: GraphAttachment[] | null, largeAttachments?: LargeAttachment[] | null, cc?: string[] | null, replyTo?: { messageId: string; mailbox: string } | null) {
   const token = await graphToken();
-  const fromMailbox = sender && sender.length > 3 ? sender : MS_SENDER_USER_ID;
+  // When threading a reply, send FROM the mailbox the inbound message lives in (Graph's
+  // reply endpoint requires it); otherwise use the composed sender / default mailbox.
+  const fromMailbox = replyTo?.mailbox && replyTo.mailbox.length > 3
+    ? replyTo.mailbox
+    : (sender && sender.length > 3 ? sender : MS_SENDER_USER_ID);
   const tag = `[SKDLA-${caseNumber}]`;
   const taggedSubject = subject.includes(tag) ? subject : `${subject} ${tag}`;
-  const messageBody: Record<string, unknown> = {
-    subject: taggedSubject,
-    body: { contentType: "HTML", content: html },
-    toRecipients: to.map((a) => ({ emailAddress: { address: a } })),
-    singleValueExtendedProperties: [{ id: "String {66f5a359-4659-4830-9070-00047ec6ac6e} Name SKDLACaseNumber", value: caseNumber }],
-  };
-  if (cc && cc.length) messageBody.ccRecipients = cc.map((a) => ({ emailAddress: { address: a } }));
-  if (attachments && attachments.length) messageBody.attachments = attachments;
-  const draftRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/messages`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(messageBody) });
-  if (!draftRes.ok) throw new Error(`Graph draft failed (mailbox=${fromMailbox}): ${draftRes.status} ${await draftRes.text()}`);
-  const draft = await draftRes.json();
+  const caseProp = { id: "String {66f5a359-4659-4830-9070-00047ec6ac6e} Name SKDLACaseNumber", value: caseNumber };
+
+  let draft: { id: string; conversationId?: string };
+  if (replyTo?.messageId) {
+    // createReply builds a draft already inside the doctor's conversation (sets
+    // conversationId + In-Reply-To/References), so it threads in their Outlook. We then
+    // overwrite recipients/subject/body to match the approved draft, and add attachments
+    // via the draft's /attachments endpoint (reply drafts can't carry them inline).
+    const replyRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/messages/${replyTo.messageId}/createReply`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" });
+    if (!replyRes.ok) throw new Error(`Graph createReply failed (mailbox=${fromMailbox}): ${replyRes.status} ${await replyRes.text()}`);
+    draft = await replyRes.json();
+    const patch: Record<string, unknown> = {
+      subject: taggedSubject,
+      body: { contentType: "HTML", content: html },
+      toRecipients: to.map((a) => ({ emailAddress: { address: a } })),
+      singleValueExtendedProperties: [caseProp],
+    };
+    if (cc && cc.length) patch.ccRecipients = cc.map((a) => ({ emailAddress: { address: a } }));
+    const patchRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/messages/${draft.id}`, { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+    if (!patchRes.ok) throw new Error(`Graph reply patch failed (mailbox=${fromMailbox}): ${patchRes.status} ${await patchRes.text()}`);
+    for (const att of attachments ?? []) {
+      const attRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/messages/${draft.id}/attachments`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(att) });
+      if (!attRes.ok) throw new Error(`Graph reply attach failed (mailbox=${fromMailbox}): ${attRes.status} ${await attRes.text()}`);
+    }
+  } else {
+    const messageBody: Record<string, unknown> = {
+      subject: taggedSubject,
+      body: { contentType: "HTML", content: html },
+      toRecipients: to.map((a) => ({ emailAddress: { address: a } })),
+      singleValueExtendedProperties: [caseProp],
+    };
+    if (cc && cc.length) messageBody.ccRecipients = cc.map((a) => ({ emailAddress: { address: a } }));
+    if (attachments && attachments.length) messageBody.attachments = attachments;
+    const draftRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/messages`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(messageBody) });
+    if (!draftRes.ok) throw new Error(`Graph draft failed (mailbox=${fromMailbox}): ${draftRes.status} ${await draftRes.text()}`);
+    draft = await draftRes.json();
+  }
   // Large user attachments go on the draft via upload sessions before we send it.
   for (const la of largeAttachments ?? []) {
     await uploadLargeAttachment(token, fromMailbox, draft.id, la);
@@ -305,7 +335,21 @@ serve(async (_req) => {
         const { inline, large } = await buildAttachmentSets(autoAttachments, a.id);
         // Coordinator-editable To override (set_attempt_to); falls back to the composed to_email.
         const toList = (Array.isArray(a.to_emails) && a.to_emails.length) ? a.to_emails : [a.to_email];
-        const send = await graphSendMail(toList, a.subject, a.body_html, q?.case_number ?? "approved", a.sender_mailbox, inline, large, a.cc_emails);
+        // Thread into the doctor's existing conversation: reply to the most recent inbound
+        // message on this queue FROM the mailbox it landed in. Fall back to a standalone
+        // message when there's no inbound reply (or it predates the mailbox column).
+        let replyTo: { messageId: string; mailbox: string } | null = null;
+        const { data: lastReply } = await sb.from("dr_outreach_replies")
+          .select("graph_message_id, mailbox")
+          .eq("queue_id", a.queue_id)
+          .not("graph_message_id", "is", null)
+          .order("received_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (lastReply?.graph_message_id && lastReply?.mailbox) {
+          replyTo = { messageId: lastReply.graph_message_id, mailbox: lastReply.mailbox };
+        }
+        const send = await graphSendMail(toList, a.subject, a.body_html, q?.case_number ?? "approved", a.sender_mailbox, inline, large, a.cc_emails, replyTo);
         await sb.from("dr_outreach_attempts").update({ status: "sent", graph_message_id: send.graph_message_id, graph_conversation_id: send.graph_conversation_id, sent_at: new Date().toISOString() }).eq("id", a.id);
         await sb.rpc("record_outbox_outbound", { p_case_number: q?.case_number, p_account_no: null, p_attempt_id: a.id, p_to_addr: a.to_email, p_subject: a.subject, p_body_html: a.body_html, p_graph_msg_id: send.graph_message_id });
         log.sent += 1;

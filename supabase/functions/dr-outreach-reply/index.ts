@@ -265,6 +265,7 @@ serve(async (req) => {
       // and the case/auto-confirm steps below are already guarded on insertedReply).
       const { data: insertedReply } = await sb.from("dr_outreach_replies").upsert({
         queue_id: queueId,
+        mailbox,
         graph_message_id: msg.id,
         graph_conversation_id: msg.conversationId,
         internet_message_id: internetMsgId,
