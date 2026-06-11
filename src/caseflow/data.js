@@ -4,9 +4,14 @@
 //
 // Attribution is client-stamped (matches the rest of this app — the data path
 // sends the publishable key, not the user JWT; see the project's auth notes).
-import { getCurrentEmployee } from '../auth.js';
+import { getCurrentEmployee, getCurrentUser } from '../auth.js';
 
 const BUCKET = 'caseflow-files';
+
+// A case lock is considered active only if its heartbeat is within this window.
+// The detail view refreshes the heartbeat every ~30s, so a crashed/closed browser
+// frees the case after at most LOCK_TTL_MS.
+export const LOCK_TTL_MS = 2 * 60 * 1000;
 
 function cfg() {
   return {
@@ -21,6 +26,22 @@ function headers(extra) {
 export function currentUser() {
   const e = getCurrentEmployee() || {};
   return e.name || e.email || 'Unknown';
+}
+// Stable identity key for a lock owner — the signed-in account's email.
+export function currentUserEmail() {
+  const u = getCurrentUser() || {};
+  const e = getCurrentEmployee() || {};
+  return (u.email || e.email || '').toLowerCase();
+}
+// Microsoft-login display name, shown in the "in use by …" toast. Falls back to
+// the employees row name, then the email local-part.
+export function currentMsName() {
+  const u = getCurrentUser() || {};
+  const fromMs = u?.user_metadata?.full_name || u?.user_metadata?.name;
+  if (fromMs) return fromMs;
+  const e = getCurrentEmployee() || {};
+  if (e.name) return e.name;
+  return (u.email || '').split('@')[0] || 'Someone';
 }
 
 async function rest(path, opts) {
@@ -62,6 +83,9 @@ function rowToCase(row) {
     outsourceNotes: row.outsource_notes || '',
     qcNotes: row.qc_notes || '',
     updated: fmtUpdated(row.updated_at),
+    lockedBy: row.locked_by || null,
+    lockedByName: row.locked_by_name || null,
+    lockedAt: row.locked_at || null,
     timeline: row.events || [],
     files: f.entry || [], reviewFiles: f.review || [], scanFiles: f.scan || [], designFile: f.design || null,
   };
@@ -116,6 +140,67 @@ export async function saveCase(c) {
     method: 'PATCH',
     headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
     body: JSON.stringify(caseToRow(c)),
+  });
+}
+
+// ── case locks (advisory, Design Team) ──────────────────────────────
+// Narrow projection so the 5s lock poll never re-fetches the heavy JSONB.
+export async function loadLocks() {
+  const rows = await rest(
+    '/rest/v1/caseflow_cases?select=id,case_id,case_num,patient,locked_by,locked_by_name,locked_at' +
+    '&locked_by=not.is.null',
+    { headers: headers() }
+  );
+  return (rows || []).map(r => ({
+    uuid: r.id, id: r.case_id, caseNum: r.case_num || '', patient: r.patient || '—',
+    lockedBy: r.locked_by || null, lockedByName: r.locked_by_name || null, lockedAt: r.locked_at || null,
+  }));
+}
+
+// Claim (or take over) a case for the signed-in user. Writes only the lock
+// columns so it never races a concurrent case-detail save.
+export async function acquireLock(uuid) {
+  if (!uuid) return null;
+  const at = new Date().toISOString();
+  const by = currentUserEmail(), byName = currentMsName();
+  await rest('/rest/v1/caseflow_cases?id=eq.' + uuid, {
+    method: 'PATCH',
+    headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+    body: JSON.stringify({ locked_by: by, locked_by_name: byName, locked_at: at }),
+  });
+  return { lockedBy: by, lockedByName: byName, lockedAt: at };
+}
+
+// Refresh the heartbeat while the detail stays open. Scoped to the current
+// holder (locked_by=me) so it can't revive a lock an admin has taken over.
+export async function heartbeatLock(uuid) {
+  if (!uuid) return null;
+  const me = currentUserEmail();
+  if (!me) return null;
+  const at = new Date().toISOString();
+  await rest('/rest/v1/caseflow_cases?id=eq.' + uuid + '&locked_by=eq.' + encodeURIComponent(me), {
+    method: 'PATCH',
+    headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+    body: JSON.stringify({ locked_at: at }),
+  });
+  return at;
+}
+
+// Clear the lock. By default only clears the signed-in user's own lock (so a
+// user backing out can't wipe an admin's override). Pass {force:true} for the
+// admin "release" action, which clears regardless of owner.
+export async function releaseLock(uuid, opts) {
+  if (!uuid) return;
+  let path = '/rest/v1/caseflow_cases?id=eq.' + uuid;
+  if (!(opts && opts.force)) {
+    const me = currentUserEmail();
+    if (!me) return;
+    path += '&locked_by=eq.' + encodeURIComponent(me);
+  }
+  await rest(path, {
+    method: 'PATCH',
+    headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
+    body: JSON.stringify({ locked_by: null, locked_by_name: null, locked_at: null }),
   });
 }
 

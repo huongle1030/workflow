@@ -55,6 +55,15 @@
 .cf-root .case-row { display:grid;grid-template-columns:110px 1fr 130px 150px 70px 100px 100px;gap:0;border-bottom:0.5px solid var(--color-border-tertiary);padding:0 16px;cursor:pointer;transition:background .1s }
 .cf-root .case-row:last-child { border-bottom:none }
 .cf-root .case-row:hover { background:var(--color-background-secondary) }
+/* Locked case (being worked on by another Design Team user) — dimmed + un-openable */
+.cf-root .case-row.cf-locked { cursor:not-allowed;background:var(--color-background-secondary) }
+.cf-root .case-row.cf-locked:hover { background:var(--color-background-secondary) }
+.cf-root .case-row.cf-locked .td:not(.case-id) { opacity:.5 }
+.cf-root .case-row.cf-locked .case-id { flex-wrap:wrap;gap:4px;row-gap:3px }
+.cf-root .cf-lock-chip { display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:500;line-height:1;padding:2px 6px;border-radius:999px;background:#FBE9D9;color:#9A4A12;border:0.5px solid #F0C7A0;white-space:nowrap }
+.cf-root .cf-lock-chip i { font-size:11px }
+.cf-root .cf-lock-override { font-size:10px;font-weight:500;line-height:1;padding:2px 7px;border-radius:999px;border:0.5px solid var(--color-border-primary);background:var(--color-background-primary);color:var(--color-border-primary);cursor:pointer;white-space:nowrap }
+.cf-root .cf-lock-override:hover { background:var(--color-background-secondary) }
 .cf-root .td { padding:11px 8px;font-size:13px;display:flex;align-items:center }
 /* Complete tab: extra Partner + Completed (PST) columns → its own 8-col grid */
 .cf-root .cases-table-complete .table-header,
