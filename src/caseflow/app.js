@@ -16,6 +16,7 @@ import { getDcl, dclEsc, dclAttr, dclAutoPopulate, dclVisibility } from './dcl.j
 import { exportZip, buildAndDownloadZip, fillDesignPdf } from './export.js';
 import * as Data from './data.js';
 import { getCurrentUser, getCurrentEmployee } from '../auth.js';
+import { getCurrentRole, ROLES } from '../permissions.js';
 import { renderCode39 } from '../barcode.js';
 import './styles.css';
 
@@ -72,7 +73,36 @@ function rushBadge(r) { return r ? '<span class="rush-badge"><i class="ti ti-bol
 function fmtDate(d) { if (!d) return '<span style="color:var(--color-text-tertiary);font-size:12px">—</span>'; const p = d.split('-'); return `<span style="font-size:12px">${p[1]}/${p[2]}/${p[0]}</span>`; }
 function fmtTs(ts) { try { return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } }
 function deToday() { const d = new Date(); const p = n => ('0' + n).slice(-2); return p(d.getMonth() + 1) + '/' + p(d.getDate()) + '/' + d.getFullYear(); }
-function tblRows(list, mode) { return list.map(c => `<div class="case-row" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" onclick="CF.openCase('${mode}','${c.id}')" tabindex="0" role="button"><div class="td case-id">${c.caseNum || '—'}</div><div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div><div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div><div class="td">${badge(c.stage)}</div><div class="td">${rushBadge(c.rush)}</div><div class="td">${fmtDate(c.shipDate)}</div><div class="td">${fmtDate(c.drDueDate)}</div></div>`).join(''); }
+// ── case locks (advisory, Design Team only) ─────────────────────────
+// A case "opened" in Design Team is locked to its opener so teammates don't
+// duplicate work. Active only while the heartbeat is fresh (see LOCK_TTL_MS).
+function isLockActive(c) {
+  if (!c || !c.lockedBy || !c.lockedAt) return false;
+  const t = new Date(c.lockedAt).getTime();
+  return Number.isFinite(t) && (Date.now() - t) < Data.LOCK_TTL_MS;
+}
+function lockedByOther(c) { return isLockActive(c) && c.lockedBy !== Data.currentUserEmail(); }
+function isCfAdmin() { return getCurrentRole() === ROLES.ADMIN; }
+
+// Per-row lock decoration. Locking applies to Design Team rows only; every other
+// mode renders exactly as before. Returns the row class, click handler, and the
+// in-cell "in use by …" chip (+ an admin "Open anyway" override).
+function rowLock(c, mode) {
+  if (mode !== 'design' || !lockedByOther(c)) {
+    return { cls: '', click: `onclick="CF.openCase('${mode}','${c.id}')"`, chip: '' };
+  }
+  const who = esc(c.lockedByName || 'someone');
+  let chip = `<span class="cf-lock-chip" title="In use by ${who}"><i class="ti ti-lock"></i> ${who}</span>`;
+  if (isCfAdmin()) chip += `<button type="button" class="cf-lock-override" onclick="event.stopPropagation();CF.overrideLock('${mode}','${c.id}')">Open anyway</button>`;
+  return { cls: ' cf-locked', click: `onclick="CF.lockedToast('${c.id}')"`, chip };
+}
+
+function tblRows(list, mode) {
+  return list.map(c => {
+    const L = rowLock(c, mode);
+    return `<div class="case-row${L.cls}" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" ${L.click} tabindex="0" role="button"><div class="td case-id">${c.caseNum || '—'}${L.chip}</div><div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div><div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div><div class="td">${badge(c.stage)}</div><div class="td">${rushBadge(c.rush)}</div><div class="td">${fmtDate(c.shipDate)}</div><div class="td">${fmtDate(c.drDueDate)}</div></div>`;
+  }).join('');
+}
 function tblWrap(list, mode) { return `<div class="cases-table"><div class="table-header"><div class="th">Case #</div><div class="th">Patient</div><div class="th">Doctor</div><div class="th">Stage</div><div class="th">Rush</div><div class="th">Ship Date</div><div class="th">Dr Due Date</div></div>${tblRows(list, mode)}</div>`; }
 function emptyMsg(msg) { return `<div class="cf-empty"><i class="ti ti-check"></i>${msg}</div>`; }
 // Soonest-to-ship first; cases without a ship date sink to the bottom.
@@ -99,7 +129,14 @@ export async function renderCaseFlowMode(mode) {
       // Match loosely (the stored id is a string; case ids may be numeric) and set the
       // real id back so getC()'s strict === keeps working afterwards.
       const hit = (sm === mode && sc) ? cases.find(x => String(x.id) === sc) : null;
-      if (hit) { selectedMode = sm; selectedCaseId = hit.id; }
+      if (hit && mode === 'design' && lockedByOther(hit)) {
+        // Someone else grabbed it while we were away — fall back to the queue.
+        try { localStorage.removeItem('cf_sel_mode'); localStorage.removeItem('cf_sel_case'); } catch {}
+        lockedToast(hit.id);
+      } else if (hit) {
+        selectedMode = sm; selectedCaseId = hit.id;
+        if (mode === 'design') startLock(hit.id); // re-claim our lock after a reload
+      }
     } catch {}
   }
   renderMode(mode);
@@ -241,8 +278,9 @@ function applyCompleteFilters(list) {
 function completeTblRows(list) {
   return list.map(c => {
     const ts = fmtPstTs(completedAtIso(c));
-    return `<div class="case-row" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" onclick="CF.openCase('design','${c.id}')" tabindex="0" role="button">`
-      + `<div class="td case-id">${c.caseNum || '—'}</div>`
+    const L = rowLock(c, 'design');
+    return `<div class="case-row${L.cls}" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" ${L.click} tabindex="0" role="button">`
+      + `<div class="td case-id">${c.caseNum || '—'}${L.chip}</div>`
       + `<div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div>`
       + `<div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div>`
       + `<div class="td" style="font-size:12px">${esc(partnerLabel(c))}</div>`
@@ -312,16 +350,100 @@ function setCrTab(t) { crTab = t; renderMode('casereview'); }
 
 // ── navigation ──────────────────────────────────────────────────────
 function openCase(mode, id) {
+  // Design Team is collaborative-locked: block opening a case someone else is
+  // actively working (admins override via CF.overrideLock / the chip button).
+  if (mode === 'design') {
+    const c = getC(id);
+    if (lockedByOther(c)) { lockedToast(id); return; }
+  }
+  enterCase(mode, id);
+}
+function enterCase(mode, id) {
   if (selectedMode && selectedMode !== mode) { const prev = selectedMode; selectedMode = null; renderMode(prev); }
   selectedMode = mode; selectedCaseId = id; qcSel = null; adjSel = null;
   // Remember the open case so a reload reopens this detail (not just the queue).
   try { localStorage.setItem('cf_sel_mode', mode); localStorage.setItem('cf_sel_case', String(id)); } catch {}
+  if (mode === 'design') startLock(id);
   renderMode(mode);
 }
 function goBack(mode) {
+  if (mode === 'design') stopLock();
   selectedCaseId = null;
   try { localStorage.removeItem('cf_sel_mode'); localStorage.removeItem('cf_sel_case'); } catch {}
   renderMode(mode);
+}
+
+// Admin "Open anyway": take over an active lock and open the case.
+function overrideLock(mode, id) {
+  if (!isCfAdmin()) { lockedToast(id); return; }
+  const c = getC(id);
+  const who = (c && c.lockedByName) ? c.lockedByName : 'someone';
+  if (!window.confirm('Case ' + (c && (c.caseNum || c.id) || '') + ' is being worked on by ' + who + '.\nOpen it anyway and take over?')) return;
+  enterCase(mode, id);
+}
+function lockedToast(id) {
+  const c = getC(id);
+  const who = (c && c.lockedByName) ? c.lockedByName : 'someone';
+  const num = (c && (c.caseNum || c.id)) || 'This case';
+  toast('Case ' + num + ' is being worked on by ' + who);
+}
+
+// ── lock lifecycle (acquire + heartbeat + release) ──────────────────
+let _lockUuid = null;
+let _heartbeatTimer = null;
+function startLock(id) {
+  const c = getC(id); if (!c || !c.uuid) return;
+  _lockUuid = c.uuid;
+  // Optimistic local stamp so a queue re-render shows it as ours immediately.
+  c.lockedBy = Data.currentUserEmail(); c.lockedByName = Data.currentMsName(); c.lockedAt = new Date().toISOString();
+  Data.acquireLock(c.uuid).catch(() => {});
+  clearInterval(_heartbeatTimer);
+  _heartbeatTimer = setInterval(() => {
+    const cc = getC(selectedCaseId);
+    const panel = document.getElementById('panel-design');
+    const visible = panel && !panel.classList.contains('hidden');
+    // Only keep the lock alive while the detail is actually on screen. If the
+    // user navigated to another mode, we stop refreshing and the TTL frees it.
+    if (!cc || cc.uuid !== _lockUuid || selectedMode !== 'design' || !visible) return;
+    cc.lockedAt = new Date().toISOString();
+    Data.heartbeatLock(cc.uuid).catch(() => {});
+  }, 30000);
+}
+function stopLock() {
+  clearInterval(_heartbeatTimer); _heartbeatTimer = null;
+  const uuid = _lockUuid; _lockUuid = null;
+  if (!uuid) return;
+  const c = cases.find(x => x.uuid === uuid);
+  if (c && c.lockedBy === Data.currentUserEmail()) { c.lockedBy = null; c.lockedByName = null; c.lockedAt = null; }
+  Data.releaseLock(uuid).catch(() => {}); // owner-scoped: won't clear an admin takeover
+}
+
+// ── lock polling (Design Team queue, ~5s) ───────────────────────────
+let _lockPollTimer = null;
+function mergeLocks(locks) {
+  const byUuid = new Map(locks.map(l => [l.uuid, l]));
+  let changed = false;
+  cases.forEach(c => {
+    const l = byUuid.get(c.uuid);
+    const nb = l ? l.lockedBy : null, na = l ? l.lockedAt : null;
+    if (c.lockedBy !== nb || c.lockedAt !== na) changed = true;
+    c.lockedBy = nb; c.lockedByName = l ? l.lockedByName : null; c.lockedAt = na;
+  });
+  return changed;
+}
+async function pollLocks() {
+  const panel = document.getElementById('panel-design');
+  if (!panel || panel.classList.contains('hidden')) return;   // only while Design Team is on screen
+  if (selectedMode === 'design' && selectedCaseId) return;     // detail open → don't disturb edits
+  if (!loaded) return;
+  const search = panel.querySelector('.cf-queue-search input');
+  if (search && document.activeElement === search) return;     // don't yank focus mid-search
+  const term = search ? search.value : '';
+  let locks;
+  try { locks = await Data.loadLocks(); } catch { return; }
+  if (!mergeLocks(locks)) return;                              // nothing changed → skip re-render
+  renderMode('design');
+  if (term) { const s2 = panel.querySelector('.cf-queue-search input'); if (s2) { s2.value = term; filterQueue(s2); } }
 }
 
 // advanceStage: update stage, log event, persist, keep detail open (faithful).
@@ -1219,6 +1341,11 @@ export function initCaseFlow() {
   // Check once a minute whether any outsourced case has passed its 4am hold so it
   // moves to QC even while the app stays open overnight.
   setInterval(releaseOutsourcedToQc, 60000);
+  // Design Team case-lock poll — keeps grayed-out rows in sync across users (~5s).
+  // Self-gates: only re-renders when the Design Team queue is visible and changed.
+  if (!_lockPollTimer) _lockPollTimer = setInterval(() => { pollLocks().catch(() => {}); }, 5000);
+  // Best-effort lock release if the tab closes mid-edit (TTL is the real backstop).
+  window.addEventListener('pagehide', () => { if (_lockUuid) Data.releaseLock(_lockUuid).catch(() => {}); });
   // Delegated AOX (Data Entry checklist) click handler — one global, matches the
   // prototype. Only one detail is ever open, so #aox-panel is unique.
   document.addEventListener('click', function (e) {
@@ -1236,7 +1363,7 @@ export function initCaseFlow() {
 }
 
 const CF = {
-  openCase, goBack, setDeTab, setDesignTab, setCrTab, advanceStage, filterQueue,
+  openCase, goBack, overrideLock, lockedToast, setDeTab, setDesignTab, setCrTab, advanceStage, filterQueue,
   saveOutsourceNotes, beginQc,
   // review checklist
   setAcctType, setAspDesignReq, setAspSpec, setAspVerifiedModel, setAspArch, setAspScrewType, setAspScrewCount,

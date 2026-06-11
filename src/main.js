@@ -6620,6 +6620,71 @@ async function refreshApprovals() {
     else { badge.style.display = 'none'; }
   }
   renderPendingOuts();
+  refreshLockedCases();
+}
+
+// ── Admin view of active Design Team case locks (force-release) ──────
+// Mirrors the caseflow lock TTL: a lock is "active" only if its heartbeat is
+// within this window (a crashed browser auto-frees after it).
+const LOCK_TTL_MS = 2 * 60 * 1000;
+function lockAgeLabel(iso) {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return s + 's ago';
+  return Math.round(s / 60) + 'm ago';
+}
+async function refreshLockedCases() {
+  const box = document.getElementById('approvals-locks');
+  if (!box) return;
+  if (!isApprovalsAdmin()) { box.innerHTML = ''; return; }
+  let rows = [];
+  try {
+    rows = await restGet(
+      '/rest/v1/caseflow_cases?select=id,case_num,patient,locked_by_name,locked_at' +
+      '&locked_by=not.is.null&order=locked_at.desc'
+    ) || [];
+  } catch (e) { box.innerHTML = '<div class="approvals-empty">Couldn\'t load locked cases.</div>'; return; }
+  // Drop stale locks (past the TTL) — those are effectively free already.
+  const cutoff = Date.now() - LOCK_TTL_MS;
+  rows = rows.filter(r => { const t = new Date(r.locked_at).getTime(); return Number.isFinite(t) && t >= cutoff; });
+  const heading = '<h4 style="margin:0 0 8px;font-size:13px;color:var(--color-text-secondary,#555);">Cases in use (Design Team)</h4>';
+  if (!rows.length) {
+    box.innerHTML = heading + '<div class="approvals-empty" style="padding:8px 0;">No cases are being worked on right now.</div>';
+    return;
+  }
+  const trs = rows.map(r => {
+    const id = esc(r.id);
+    return `<tr>
+      <td>${esc(r.case_num || '—')}</td>
+      <td>${esc(r.patient || '—')}</td>
+      <td><span class="appr-role-chip">${esc(r.locked_by_name || 'someone')}</span></td>
+      <td class="muted">${esc(lockAgeLabel(r.locked_at))}</td>
+      <td><div class="appr-actions"><button class="appr-btn no" onclick="forceUnlockCase('${id}')">Release</button></div></td>
+    </tr>`;
+  }).join('');
+  box.innerHTML = heading +
+    '<table class="cc-table">' +
+      '<thead><tr><th>Case #</th><th>Patient</th><th>In use by</th><th>Since</th>' +
+      '<th style="text-align:right;">Force unlock</th></tr></thead>' +
+      '<tbody>' + trs + '</tbody>' +
+    '</table>';
+}
+
+async function forceUnlockCase(uuid) {
+  if (!isApprovalsAdmin()) return;
+  try {
+    const cfg = getConfig();
+    if (!cfg.key) { needsConfig(); return; }
+    const res = await fetch(cfg.url + '/rest/v1/caseflow_cases?id=eq.' + encodeURIComponent(uuid), {
+      method: 'PATCH',
+      headers: { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ locked_by: null, locked_by_name: null, locked_at: null }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    toast('Case unlocked', 'ok');
+    await refreshLockedCases();
+  } catch (e) { toast('Unlock failed: ' + (e.message || e), 'err'); }
 }
 
 function renderPendingOuts() {
@@ -6755,7 +6820,7 @@ Object.assign(window, {
   // Metrics modal
   openMetrics, closeMetrics, loadMetrics, renderMetricsTable,
   // Admin Approvals modal
-  openApprovals, closeApprovals, refreshApprovals, approveEmployee, rejectEmployee,
+  openApprovals, closeApprovals, refreshApprovals, approveEmployee, rejectEmployee, forceUnlockCase,
   // Call Notes modal
   openCallNotes, closeCallNotes, generateCallSummary, printCallNotes,
   // Auth
