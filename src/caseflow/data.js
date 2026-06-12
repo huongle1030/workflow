@@ -143,6 +143,16 @@ export async function saveCase(c) {
   });
 }
 
+// Permanently remove a case row. Admin-gated in the UI (see app.js adminDeleteCase).
+// Storage objects under cases/<id>/ are left as-is (orphaned); only the row is deleted.
+export async function deleteCase(c) {
+  if (!c || !c.uuid) return;
+  await rest('/rest/v1/caseflow_cases?id=eq.' + c.uuid, {
+    method: 'DELETE',
+    headers: headers({ Prefer: 'return=minimal' }),
+  });
+}
+
 // ── case locks (advisory, Design Team) ──────────────────────────────
 // Narrow projection so the 5s lock poll never re-fetches the heavy JSONB.
 export async function loadLocks() {

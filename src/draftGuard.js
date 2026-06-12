@@ -15,7 +15,9 @@
 // Exposed as `window.DraftGuard` so the mode modules (caseflow / qc / nest) can call
 // `restore()` from their own render paths without importing this file.
 
-const STORAGE_KEY = 'wf_drafts_v1';
+// v2: drafts are now scoped per record (see scopeOf / data-draft-ns). Bumping the key
+// drops any legacy v1 drafts so pre-scoping caseflow keys can't leak across cases once.
+const STORAGE_KEY = 'wf_drafts_v2';
 const TTL_MS = 24 * 60 * 60 * 1000;     // drop drafts older than 24h
 const PERSIST_DEBOUNCE_MS = 400;
 
@@ -66,6 +68,24 @@ const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'numb
 
 function keyOf(el) {
   return el.id || el.getAttribute('name') || (el.dataset && el.dataset.draft) || null;
+}
+
+// ---- per-scope keys -------------------------------------------------
+// A field whose id is reused across records (e.g. caseflow's `de-notes`, `rx-notes`
+// — the same ids render for every case) would otherwise have its draft restored into
+// the WRONG record. Any ancestor carrying `data-draft-ns="<scope>"` opts its fields
+// into a scoped key, so a draft typed under one scope only ever restores under that
+// same scope. Fields with no scoped ancestor behave exactly as before (unscoped).
+const SCOPE_SEP = '\x1f';   // unit separator — never appears in element ids or scope values
+function scopeOf(el) {
+  try { const s = el.closest && el.closest('[data-draft-ns]'); return s ? (s.getAttribute('data-draft-ns') || '') : ''; }
+  catch { return ''; }
+}
+function storageKey(el) {
+  const base = keyOf(el);
+  if (!base) return null;
+  const scope = scopeOf(el);
+  return scope ? scope + SCOPE_SEP + base : base;
 }
 
 // True for fields whose content we should preserve.
@@ -127,7 +147,8 @@ function applyEntry(el, entry) {
 function onEdit(e) {
   const el = e.target;
   if (!isPreservable(el)) return;
-  const key = keyOf(el);
+  const key = storageKey(el);
+  if (!key) return;
   bucket()[key] = readEntry(el);
   persistSoon();
 }
@@ -186,11 +207,20 @@ function restore(root) {
 }
 
 function findField(root, key) {
-  // key may be an id, a name, or a data-draft value.
+  // key may carry a "<scope>\x1f<base>" prefix; base is an id, a name, or a data-draft value.
+  let scope = '', base = key;
+  const sep = key.indexOf(SCOPE_SEP);
+  if (sep !== -1) { scope = key.slice(0, sep); base = key.slice(sep + 1); }
   let el = null;
-  try { el = root.querySelector(`#${cssEscape(key)}`); } catch {}
-  if (el) return el;
-  try { el = root.querySelector(`[name="${cssAttr(key)}"], [data-draft="${cssAttr(key)}"]`); } catch {}
+  try { el = root.querySelector(`#${cssEscape(base)}`); } catch {}
+  if (!el) { try { el = root.querySelector(`[name="${cssAttr(base)}"], [data-draft="${cssAttr(base)}"]`); } catch {} }
+  if (!el) return null;
+  // A scoped draft only matches a field that still lives under the same scope, so a
+  // draft typed in one case never restores into another that reuses the same id.
+  if (scope) {
+    const owner = el.closest && el.closest('[data-draft-ns]');
+    if (!owner || owner.getAttribute('data-draft-ns') !== scope) return null;
+  }
   return el;
 }
 
