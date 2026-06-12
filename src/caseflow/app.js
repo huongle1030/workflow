@@ -100,7 +100,7 @@ function rowLock(c, mode) {
 function tblRows(list, mode) {
   return list.map(c => {
     const L = rowLock(c, mode);
-    return `<div class="case-row${L.cls}" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" ${L.click} tabindex="0" role="button"><div class="td case-id">${c.caseNum || '—'}${L.chip}</div><div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div><div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div><div class="td">${badge(c.stage)}</div><div class="td">${rushBadge(c.rush)}</div><div class="td">${fmtDate(c.shipDate)}</div><div class="td">${fmtDate(c.drDueDate)}</div></div>`;
+    return `<div class="case-row${L.cls}" data-search="${esc((c.caseNum || '') + ' ' + (c.id || ''))}" ${L.click} tabindex="0" role="button"><div class="td case-id">${c.caseNum || '—'}${L.chip}</div><div class="td"><span style="font-weight:500">${esc(c.patient)}</span></div><div class="td" style="font-size:12px;color:var(--color-text-secondary)">${esc(c.doctor)}</div><div class="td">${badge(c.stage)}</div><div class="td">${rushBadge(c.rush)}</div><div class="td">${fmtDate(c.shipDate)}</div><div class="td">${fmtDate(c.drDueDate)}</div>${rowDelBtn(c, mode)}</div>`;
   }).join('');
 }
 function tblWrap(list, mode) { return `<div class="cases-table"><div class="table-header"><div class="th">Case #</div><div class="th">Patient</div><div class="th">Doctor</div><div class="th">Stage</div><div class="th">Rush</div><div class="th">Ship Date</div><div class="th">Dr Due Date</div></div>${tblRows(list, mode)}</div>`; }
@@ -151,14 +151,15 @@ function renderMode(mode) {
   const el = panelEl(mode); if (!el) return;
   const c = (selectedMode === mode && selectedCaseId) ? getC(selectedCaseId) : null;
   const pad = ' style="padding:18px 28px 28px"';
-  if (c) { el.innerHTML = `<div class="cf-root"${pad}>${detailHeader(c, mode)}<div id="cf-detail">${renderCaseDetail(c)}</div></div>`; afterDetailRender(c); }
+  if (c) { el.innerHTML = `<div class="cf-root" data-draft-ns="cf:${c.id}"${pad}>${detailHeader(c, mode)}<div id="cf-detail">${renderCaseDetail(c)}</div></div>`; afterDetailRender(c); }
   else { el.innerHTML = `<div class="cf-root"${pad}>${renderQueue(mode)}</div>`; }
   // Re-apply any in-progress field edits the user had typed (survives reloads).
   if (window.DraftGuard) window.DraftGuard.restore(el);
 }
 
 function detailHeader(c, mode) {
-  return `<div class="cf-detail-head"><button class="btn btn-sm" onclick="CF.goBack('${mode}')"><i class="ti ti-arrow-left"></i> Back</button><span class="cf-breadcrumb">/ ${c.caseNum || 'New'} — ${esc(c.patient)}</span></div>`;
+  const del = isCfAdmin() ? `<button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="CF.adminDeleteCase('${mode}','${c.id}')"><i class="ti ti-trash"></i> Delete case</button>` : '';
+  return `<div class="cf-detail-head" style="display:flex;align-items:center;gap:10px"><button class="btn btn-sm" onclick="CF.goBack('${mode}')"><i class="ti ti-arrow-left"></i> Back</button><span class="cf-breadcrumb">/ ${c.caseNum || 'New'} — ${esc(c.patient)}</span>${del}</div>`;
 }
 
 function renderQueue(mode) {
@@ -288,6 +289,7 @@ function completeTblRows(list) {
       + `<div class="td">${fmtDate(c.shipDate)}</div>`
       + `<div class="td">${fmtDate(c.drDueDate)}</div>`
       + `<div class="td" style="font-size:12px">${ts ? esc(ts) : '<span style="color:var(--color-text-tertiary)">—</span>'}</div>`
+      + rowDelBtn(c, 'design')
       + `</div>`;
   }).join('');
 }
@@ -886,21 +888,31 @@ function renderCaseDetail(c) {
   }
 
   if (c.stage === 'Review') {
+    const sv = `onchange="CF.saveReviewInfo('${c.id}')"`;
     reviewInfoPanel = `<div class="panel"><div class="panel-title"><i class="ti ti-eye"></i> Submitted Data for Review</div>
-    <div class="info-row">
-      <div class="info-pair"><span class="info-key">Patient</span><span class="info-val">${esc(c.patient)}</span></div>
-      <div class="info-pair"><span class="info-key">Case number</span><span class="info-val" style="font-family:var(--font-mono);font-size:12px">${c.caseNum || '—'}</span></div>
-      <div class="info-pair"><span class="info-key">Doctor</span><span class="info-val">${esc(c.doctor)}</span></div>
-      <div class="info-pair"><span class="info-key">Rush</span><span class="info-val">${c.rush ? '<span class="rush-badge"><i class="ti ti-bolt" style="font-size:10px"></i> Rush</span>' : 'No'}</span></div>
-      <div class="info-pair"><span class="info-key">Ship date</span><span class="info-val">${c.shipDate || '—'}</span></div>
-      <div class="info-pair"><span class="info-key">Dr due date</span><span class="info-val">${c.drDueDate || '—'}</span></div>
-      ${a.arch ? `<div class="info-pair"><span class="info-key">Arch / Tooth #</span><span class="info-val">${esc(a.arch)}</span></div>` : ''}
-      ${a.toothShade ? `<div class="info-pair"><span class="info-key">Tooth shade</span><span class="info-val">${esc(a.toothShade)}</span></div>` : ''}
-      ${a.gumShade ? `<div class="info-pair"><span class="info-key">Gum shade</span><span class="info-val">${esc(a.gumShade)}</span></div>` : ''}
-      ${a.tech ? `<div class="info-pair"><span class="info-key">Tech</span><span class="info-val">${esc(a.tech)}</span></div>` : ''}
-      ${a.cat ? `<div class="info-pair"><span class="info-key">Case DSO</span><span class="info-val">${CAT_NAMES[a.cat] || a.cat}</span></div>` : ''}
-      ${a.crm && a.refCase ? `<div class="info-pair"><span class="info-key">Cont / Remake / Update</span><span class="info-val">Ref case #${esc(a.refCase)}</span></div>` : ''}
-    </div></div>`;
+    <div class="alert alert-info" style="margin-bottom:12px;font-size:12px"><i class="ti ti-pencil"></i> These fields came from Data Entry — edit any of them here to correct the case.</div>
+      <div class="form-row" style="margin-bottom:10px">
+        <div class="form-group"><label>Patient</label><input type="text" id="cri-patient" value="${dclAttr(c.patient)}" ${sv}></div>
+        <div class="form-group"><label>Case number</label><input type="text" id="cri-casenum" value="${dclAttr(c.caseNum || '')}" placeholder="e.g. 2024-0043" ${sv}></div>
+      </div>
+      <div class="form-group" style="margin-bottom:10px"><label>Doctor</label><input type="text" id="cri-doctor" value="${dclAttr(c.doctor)}" placeholder="Dr. First &amp; Last name" ${sv}></div>
+      <div class="form-row" style="margin-bottom:10px">
+        <div class="form-group"><label>Ship date</label><input type="date" id="cri-shipdate" value="${c.shipDate || ''}" ${sv}></div>
+        <div class="form-group"><label>Dr due date</label><input type="date" id="cri-drdue" value="${c.drDueDate || ''}" ${sv}></div>
+      </div>
+      <div class="form-row" style="margin-bottom:10px">
+        <div class="form-group"><label>Tooth shade</label><input type="text" id="cri-toothshade" value="${dclAttr(a.toothShade || '')}" placeholder="e.g. A2, BL2" ${sv}></div>
+        <div class="form-group"><label>Gum shade</label><input type="text" id="cri-gumshade" value="${dclAttr(a.gumShade || '')}" placeholder="e.g. Pink, Light" ${sv}></div>
+      </div>
+      <div class="form-row" style="margin-bottom:10px">
+        <div class="form-group"><label>Arch / Tooth #</label><input type="text" id="cri-arch" value="${dclAttr(a.arch || '')}" placeholder="e.g. #14, Upper" ${sv}></div>
+        <div class="form-group"><label>Tech</label><input type="text" id="cri-tech" value="${dclAttr(a.tech || '')}" placeholder="Technician name" ${sv}></div>
+      </div>
+      <div class="form-group" style="margin-bottom:10px"><label>Case DSO</label><select id="cri-cat" ${sv}><option value="">— Select —</option>${Object.keys(CAT_NAMES).map(k => `<option value="${k}"${a.cat === k ? ' selected' : ''}>${CAT_NAMES[k]}</option>`).join('')}</select></div>
+      <div class="rush-row${c.rush ? ' rush-active' : ''}" style="margin-bottom:10px"><input type="checkbox" id="cri-rush" ${c.rush ? 'checked' : ''} ${sv}><label class="rush-label" for="cri-rush">Rush?</label></div>
+      <div class="crm-row${a.crm ? ' on' : ''}"><input type="checkbox" id="cri-crm" ${a.crm ? 'checked' : ''} ${sv}><label for="cri-crm" style="font-size:13px;font-weight:500;flex:1;cursor:pointer">Cont / Remake / Update?</label></div>
+      <div class="form-group" style="margin-top:8px"><label>Referenced case #</label><input type="text" id="cri-refcase" value="${dclAttr(a.refCase || '')}" placeholder="Enter referenced case number" ${sv}></div>
+    </div>`;
     const crBucket = (r && r.crBucket) || null;
     if (crBucket) {
     // Case in a Case-Review bucket: sent back from Design, on hold, or escalated to
@@ -1238,6 +1250,53 @@ async function uploadCrFiles(id, key, files) {
 }
 function crMissingRemove(id, idx) { const r = getR(id); if (r.aspFiles && r.aspFiles.missing_info) { r.aspFiles.missing_info.splice(idx, 1); cfSave(getC(id)); if (selectedMode) renderMode(selectedMode); } }
 function saveCrFields(id) { const r = getR(id); const cl = document.getElementById('cr-clarification'); if (cl) r.crClarification = cl.value; const tn = document.getElementById('cr-ta-notes'); if (tn) r.taNotes = tn.value; cfSave(getC(id)); }
+// Persist the editable "Submitted Data for Review" panel (Case Review). Mirrors the
+// Data Entry fields back onto the case (c.*) and AOX checklist (a.*) so reviewers can
+// correct anything that came from Data Entry without bouncing the case back.
+function saveReviewInfo(id) {
+  const c = getC(id); if (!c) return; const a = getA(id);
+  const g = k => document.getElementById(k);
+  let el;
+  if ((el = g('cri-patient'))) c.patient = el.value;
+  if ((el = g('cri-casenum'))) c.caseNum = el.value;
+  if ((el = g('cri-doctor'))) c.doctor = el.value;
+  if ((el = g('cri-shipdate'))) c.shipDate = el.value;
+  if ((el = g('cri-drdue'))) c.drDueDate = el.value;
+  if ((el = g('cri-toothshade'))) a.toothShade = el.value;
+  if ((el = g('cri-gumshade'))) a.gumShade = el.value;
+  if ((el = g('cri-arch'))) a.arch = el.value;
+  if ((el = g('cri-tech'))) a.tech = el.value;
+  if ((el = g('cri-cat'))) a.cat = el.value || null;
+  if ((el = g('cri-rush'))) c.rush = el.checked;
+  if ((el = g('cri-crm'))) a.crm = el.checked;
+  if ((el = g('cri-refcase'))) a.refCase = el.value;
+  cfSave(c);
+}
+
+// Admin-only hard delete. Wired to the trash button on every queue row and the case
+// detail header (all modes / sub-tabs). Removes the row from Supabase, then drops it
+// from the in-memory list and clears any open detail / Design lock for it.
+async function adminDeleteCase(mode, id) {
+  if (!isCfAdmin()) { toast('Only admins can delete cases'); return; }
+  const c = getC(id); if (!c) return;
+  const label = c.caseNum || c.patient || c.id;
+  if (!window.confirm('Delete case "' + label + '"?\n\nThis permanently removes it from the database and cannot be undone.')) return;
+  try { await Data.deleteCase(c); }
+  catch (e) { toast('Delete failed: ' + e.message); return; }
+  cases = cases.filter(x => x.id !== id);
+  if (selectedCaseId === id) {
+    if (selectedMode === 'design') stopLock();
+    selectedCaseId = null;
+    try { localStorage.removeItem('cf_sel_mode'); localStorage.removeItem('cf_sel_case'); } catch {}
+  }
+  toast('Case ' + label + ' deleted');
+  renderMode(mode || selectedMode || 'dataentry');
+}
+// Small trash control shown on each queue row for admins (no-op markup otherwise).
+function rowDelBtn(c, mode) {
+  if (!isCfAdmin()) return '';
+  return `<button class="cf-row-del" title="Delete case" aria-label="Delete case" onclick="event.stopPropagation();CF.adminDeleteCase('${mode}','${c.id}')"><i class="ti ti-trash"></i></button>`;
+}
 function crSendToDesign(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; c.stage = 'Design Check'; cfEvent(c, 'Returned to Design with new files/clarification' + (r.crClarification ? ': ' + r.crClarification : ''), 'Case Review Team'); cfSave(c); toast('Sent back to Design'); goBack('casereview'); }
 function crHoldMissing(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = 'hold_missing'; c.stage = 'Review'; cfEvent(c, 'Placed on hold for missing information', 'Case Review Team'); cfSave(c); toast('Placed on hold for missing information'); goBack('casereview'); }
 function showTaNotes() { const b = document.getElementById('ta-notes-block'); if (b) b.style.display = 'block'; }
@@ -1374,7 +1433,9 @@ const CF = {
   passToDesign, passToScanning, showCoordReason, sendToCoordination, showReturnReason, sendBackToDataEntry,
   exportCaseReviewZip,
   // design → case review return + case review bucket actions
-  showDesignReturn, sendBackToCaseReview, crMissingPick, crMissingDrop, crMissingRemove, saveCrFields,
+  showDesignReturn, sendBackToCaseReview, crMissingPick, crMissingDrop, crMissingRemove, saveCrFields, saveReviewInfo,
+  // admin
+  adminDeleteCase,
   crSendToDesign, crHoldMissing, showTaNotes, crEscalateTa, crPassToScanning,
   // design routing (outsource partners / bar / vjig / milling)
   showDesignRouting, showOutsourcePartners, routeDesign, sendToOutsource, clearDesignRoute, exportDesignZip, setQcPartner,

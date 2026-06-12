@@ -52,7 +52,7 @@
 .cf-root .cases-table { background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden }
 .cf-root .table-header { display:grid;grid-template-columns:110px 1fr 130px 150px 70px 100px 100px;gap:0;border-bottom:0.5px solid var(--color-border-tertiary);padding:0 16px }
 .cf-root .th { padding:10px 8px;font-size:11px;font-weight:500;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.06em }
-.cf-root .case-row { display:grid;grid-template-columns:110px 1fr 130px 150px 70px 100px 100px;gap:0;border-bottom:0.5px solid var(--color-border-tertiary);padding:0 16px;cursor:pointer;transition:background .1s }
+.cf-root .case-row { position:relative;display:grid;grid-template-columns:110px 1fr 130px 150px 70px 100px 100px;gap:0;border-bottom:0.5px solid var(--color-border-tertiary);padding:0 16px;cursor:pointer;transition:background .1s }
 .cf-root .case-row:last-child { border-bottom:none }
 .cf-root .case-row:hover { background:var(--color-background-secondary) }
 /* Locked case (being worked on by another Design Team user) — dimmed + un-openable */
@@ -64,6 +64,11 @@
 .cf-root .cf-lock-chip i { font-size:11px }
 .cf-root .cf-lock-override { font-size:10px;font-weight:500;line-height:1;padding:2px 7px;border-radius:999px;border:0.5px solid var(--color-border-primary);background:var(--color-background-primary);color:var(--color-border-primary);cursor:pointer;white-space:nowrap }
 .cf-root .cf-lock-override:hover { background:var(--color-background-secondary) }
+/* Admin-only quick-delete — sits at the right edge of a row, revealed on hover */
+.cf-root .cf-row-del { position:absolute;right:10px;top:50%;transform:translateY(-50%);display:none;align-items:center;justify-content:center;width:28px;height:28px;border:0.5px solid var(--color-border-tertiary);border-radius:7px;background:var(--color-background-primary);color:#A0341A;cursor:pointer;z-index:3;box-shadow:0 1px 4px rgba(0,0,0,.08) }
+.cf-root .cf-row-del i { font-size:15px }
+.cf-root .case-row:hover .cf-row-del { display:inline-flex }
+.cf-root .cf-row-del:hover { background:#FBE9E7;border-color:#A0341A }
 .cf-root .td { padding:11px 8px;font-size:13px;display:flex;align-items:center }
 /* Complete tab: extra Partner + Completed (PST) columns → its own 8-col grid */
 .cf-root .cases-table-complete .table-header,
