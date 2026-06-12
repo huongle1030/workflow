@@ -813,19 +813,55 @@ function renderReschedule() {
 // Composes a pending_approval attempt using the reschedule_check template
 // and routes it through the normal review-and-send flow.
 async function queueRescheduleCheck(caseNumber) {
-  if (!confirm('Draft a reschedule check email for case ' + caseNumber + '?\n\nThe draft will appear in Pending Outbound for your review before sending.')) return;
+  if (!confirm('Draft a reschedule check email for case ' + caseNumber + '?\n\nYou’ll be taken to its card in Pending Outbound with the draft ready to review and send.')) return;
   try {
-    await callRpc('queue_reschedule_check', { p_case_number: caseNumber });
-    toast('Draft created — open Pending Outbound to review', 'ok');
+    const res = await callRpc('queue_reschedule_check', { p_case_number: caseNumber });
+    // queue_reschedule_check returns the new attempt id (the card's data-id). Normalize across the
+    // REST (bare scalar) and cowork (rows) response shapes so we can jump straight to that card.
+    const attemptId = extractRpcScalar(res);
+    toast('Draft created — opening it in Pending Outbound', 'ok');
     // reschedule_check lands in the pending_approval bucket, which renders in the
     // "Pending Outbound" sub-tab (data-tab="approval"), NOT the "Scan Submission"
     // sub-tab (data-tab="outbound"). Switch there so the new draft is visible.
     const outboundTab = document.querySelector('#tabs-outreach .tab[data-tab="approval"]');
     if (outboundTab) outboundTab.click();
     await loadAll();
+    focusOutboundCard(attemptId, caseNumber);
   } catch (e) {
     toast('Could not draft: ' + (e?.message || e), 'err');
   }
+}
+
+// Unwrap an RPC result into its scalar value, tolerating REST (bare value) and cowork (array of
+// single-key rows) shapes.
+function extractRpcScalar(res) {
+  if (res == null) return null;
+  if (typeof res === 'string' || typeof res === 'number') return res;
+  if (Array.isArray(res)) return res.length ? extractRpcScalar(res[0]) : null;
+  if (typeof res === 'object') { const v = Object.values(res); return v.length ? v[0] : null; }
+  return res;
+}
+
+// Scroll the freshly-drafted Pending Outbound card into view and expand it so the draft is visible.
+// The drafted card's data-id is the attempt id; we fall back to a case-number match. Retries briefly
+// because loadAll()'s re-render may not have painted the card yet.
+function focusOutboundCard(attemptId, caseNumber, tries) {
+  tries = tries || 0;
+  let el = attemptId ? document.querySelector('#list-approval .item[data-id="' + CSS.escape(String(attemptId)) + '"]') : null;
+  if (!el && caseNumber) {
+    el = Array.from(document.querySelectorAll('#list-approval .item')).find(it =>
+      (it.querySelector('.case-sub, .case')?.textContent || '').includes(caseNumber));
+  }
+  if (!el) {
+    if (tries < 12) setTimeout(() => focusOutboundCard(attemptId, caseNumber, tries + 1), 150);
+    return;
+  }
+  el.classList.add('expanded');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Brief highlight so it's obvious which card opened (inline so no CSS dependency).
+  el.style.transition = 'box-shadow .25s ease';
+  el.style.boxShadow = '0 0 0 3px rgba(200,160,74,.9)';
+  setTimeout(() => { el.style.boxShadow = ''; }, 2200);
 }
 
 function exportReschedule() {
