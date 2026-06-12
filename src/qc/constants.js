@@ -54,10 +54,11 @@ export const TECHNICIANS_BY_TEAM = {
   'Printing': ['Print Team'],
 };
 
-// Technical experts notified on staging / internal-remake (QCLogPage.jsx line 36).
+// Technical experts notified on staging / internal-remake (qc-app MRBBoard.jsx + QCLogPage.jsx).
 export const EXPERTS = [
   { name: 'Jeannette Rubio', email: 'jeannette.rubio@skdla.com' },
   { name: 'Ryan Okon',       email: 'ryan.okon@skdla.com' },
+  { name: 'Deepak Polemoni', email: 'deepak.polemoni@skdla.com' },
 ];
 
 // Project anon JWT — used ONLY for the notify-expert-staged edge function call.

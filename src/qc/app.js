@@ -6,7 +6,7 @@
 // staged_cases) via ./data.js. See PRD_quality_control_mode.md.
 import {
   REJECT_TYPES_BY_TEAM, DEFAULT_REJECT_TYPES, QC_REJECT_OPTIONS,
-  DEPARTMENTS, TEAMS, TECHNICIANS_BY_TEAM, EXPERTS,
+  TEAMS, TECHNICIANS_BY_TEAM, EXPERTS,
 } from './constants.js';
 import * as Data from './data.js';
 import { can, CAPABILITIES } from '../permissions.js';
@@ -28,12 +28,12 @@ function firstAllowedTab() {
 
 // ── module state ────────────────────────────────────────────────────
 const EMPTY_QC = { case_number: '', team: '', technician: '', qc_reject: 'ASAP(Same day)', reject_type: '', reject_details: '', ship_date: '' };
+// Internal Remake — qc-app field set. ship_date / dr_due_date / department are
+// auto-filled from the case lookup (not user-typed); they are still written to
+// internal_remake_log + staged_cases.
 const EMPTY_IR = {
-  case_number: '', department: '', logged_by: '',
-  technician: '', issue_step: '',
+  case_number: '', department: '', logged_by: '', description: '',
   ship_date: '', dr_due_date: '',
-  received_date: '', start_date: '', time_in_lab_days: null, total_invoice: null,
-  description: '',
 };
 
 const state = {
@@ -48,18 +48,21 @@ const state = {
   // Internal Remake
   ir: { ...EMPTY_IR },
   needsExpert: null,         // null | true | false
+  rerouteStep: '',           // required when needsExpert === false
   irSaving: false,
   irDone: false,
-  // Internal Remake case auto-lookup (populates ship/due/received/start/time-in-lab/invoice
-  // + the "step where issue occurred" dropdown when the case number is entered).
-  irSteps: [],               // [{ step, seq, start_date, finish_date, tech }]
-  irLookupCase: '',          // the case number the current auto-fill came from
+  // Internal Remake case auto-lookup. Populates caseInfo (product/BU/current step —
+  // used by the Teams card) + caseSteps (the "reroute back to" dropdown) when the
+  // case number is entered. Mirrors qc-app's Cases + wip_cases + case_steps reads.
+  caseInfo: null,            // { product, bu, department, current_step } | null
+  caseSteps: [],             // [step_consolidated, ...]
+  irLookupCase: '',          // the case number the current lookup came from
   irLookupLoading: false,
   irLookupStatus: '',        // '' | 'found' | 'notfound' | 'error'
   // Recent QC rejects table (QC Reject tab)
   recent: [],
   recentLoaded: false,
-  // Recent internal remakes / MRB board (Internal Remake tab)
+  // Recent internal remakes (Internal Remake tab) — reads internal_remake_log
   recentMrb: [],
   recentMrbLoaded: false,
 };
@@ -188,7 +191,7 @@ function qcStep3() {
   if (state.stagingDone) {
     return '<div class="cc-form-card" style="max-width:none;text-align:center">' +
       '<h3 style="margin:6px 0 8px;color:var(--blue)">Experts Notified</h3>' +
-      '<p class="muted" style="margin:0 0 18px">Jeannette &amp; Ryan have been emailed about <strong>' + esc(f.case_number) + '</strong>.</p>' +
+      '<p class="muted" style="margin:0 0 18px">Jeannette, Ryan &amp; Deepak have been emailed about <strong>' + esc(f.case_number) + '</strong>.</p>' +
       '<button class="act blue" onclick="QCMODE.resetQc()">+ Log another case</button></div>';
   }
   return '<div class="cc-form-card" style="max-width:none">' +
@@ -199,7 +202,7 @@ function qcStep3() {
     '</div>' +
     '<div class="cc-form-grid"><div class="full"><label>Doctor Due Date <span class="muted">(optional)</span></label>' +
       '<input id="qc-drdue" class="cc-input" type="date" value="' + attr(state.drDueDate) + '" oninput="QCMODE.setDrDue(this.value)"></div></div>' +
-    '<p class="muted" style="text-align:center;font-size:12px;margin:10px 0 0">Jeannette Rubio &amp; Ryan Okon will both be notified</p>' +
+    '<p class="muted" style="text-align:center;font-size:12px;margin:10px 0 0">Jeannette Rubio, Ryan Okon &amp; Deepak Polemoni will be notified</p>' +
     '<div class="qc-actions">' +
       '<button class="act" style="background:var(--slate)" onclick="QCMODE.resetQc()">Skip</button>' +
       '<button class="act blue" ' + (state.staging ? 'disabled' : '') + ' onclick="QCMODE.stage()">' + (state.staging ? 'Notifying…' : 'Notify Experts &amp; Stage') + '</button>' +
@@ -216,66 +219,62 @@ function renderInternalRemake() {
       '<p class="muted" style="margin:0 0 16px"><strong>' + esc(f.case_number) + '</strong> · ' + esc(f.department) + '</p>' +
       '<div class="qc-note ' + (expert ? 'qc-note-purple' : 'qc-note-green') + '">' +
         (expert
-          ? '<strong>Action Required.</strong> Move the case to the <strong>Internal Remake — AOX Staging Rack</strong>. A Technical Expert will review it. Jeannette &amp; Ryan have been notified by email.'
-          : '<strong>Next Step.</strong> Get the review from <strong>Final QC</strong>.') +
+          ? '<strong>Action Required.</strong> Move the case to the <strong>Internal Remake — AOX Staging Rack</strong>. A Technical Expert will review it. Jeannette, Ryan &amp; Deepak have been notified by email.'
+          : '<strong>Next Step.</strong> Reroute case to <strong>' + esc(state.rerouteStep || 'the selected step') + '</strong> and proceed.') +
       '</div>' +
       '<button class="act blue" onclick="QCMODE.resetIr()" style="margin-top:16px">Log another internal remake</button></div>';
   }
-  // The "step where issue occurred" is required only once the case's steps are loaded.
-  const stepRequiredOk = state.irSteps.length === 0 || !!f.issue_step;
-  const canSubmit = !!(f.case_number.trim() && f.department && f.logged_by.trim() && f.technician.trim() &&
-    f.ship_date && f.dr_due_date && f.description.trim() && stepRequiredOk && state.needsExpert !== null);
+  // Reroute step is required only when "No expert" is chosen (matches qc-app).
+  const rerouteOk = state.needsExpert !== false || !!state.rerouteStep;
+  const canSubmit = !!(f.case_number.trim() && f.logged_by.trim() && f.description.trim() &&
+    state.needsExpert !== null && rerouteOk);
   const yn = (val, label, sub) => {
     const a = state.needsExpert === val;
     return '<button class="qc-yn' + (a ? (val ? ' active-purple' : ' active-green') : '') + '" onclick="QCMODE.setNeedsExpert(' + val + ')">' +
       '<span class="qc-yn-label">' + label + '</span><span class="qc-yn-sub">' + sub + '</span></button>';
   };
-  // Case-number lookup status line (auto-populate feedback).
+  // Case-number lookup status line.
   let lookupNote = '';
   if (state.irLookupLoading) lookupNote = '<div class="qc-lookup-note loading">Looking up case…</div>';
-  else if (state.irLookupStatus === 'found') lookupNote = '<div class="qc-lookup-note ok">✓ Case found — dates, time in lab, invoice &amp; steps auto-filled below.</div>';
-  else if (state.irLookupStatus === 'notfound') lookupNote = '<div class="qc-lookup-note warn">Case not found — enter the dates and step manually.</div>';
-  else if (state.irLookupStatus === 'error') lookupNote = '<div class="qc-lookup-note warn">Couldn\'t load case details — enter manually.</div>';
-  // "Step where issue occurred" options come from the case's Case Steps (workflow order).
-  const stepPlaceholder = state.irLookupLoading ? 'Loading steps…'
-    : (state.irSteps.length ? 'Select the step where the issue occurred' : 'Enter case number to load steps');
-  const stepOptions = '<option value="">' + esc(stepPlaceholder) + '</option>' +
-    state.irSteps.map(s => '<option value="' + attr(s.step) + '"' + (s.step === f.issue_step ? ' selected' : '') + '>' + esc(s.step) + '</option>').join('');
-  // Read-only auto-populated displays.
-  const tilStr = (f.time_in_lab_days == null) ? '' : (f.time_in_lab_days + ' day' + (f.time_in_lab_days === 1 ? '' : 's'));
-  const invStr = (f.total_invoice == null) ? '' : ('$' + Number(f.total_invoice).toLocaleString('en-US', { maximumFractionDigits: 0 }));
+  else if (state.irLookupStatus === 'found') lookupNote = '<div class="qc-lookup-note ok">✓ Case found.</div>';
+  else if (state.irLookupStatus === 'notfound') lookupNote = '<div class="qc-lookup-note warn">Case not found — you can still submit.</div>';
+  else if (state.irLookupStatus === 'error') lookupNote = '<div class="qc-lookup-note warn">Couldn\'t load case details.</div>';
+  // "Case Found ✓" facts panel (read-only context for the user / Teams card).
+  let foundPanel = '';
+  if (state.caseInfo) {
+    const ci = state.caseInfo;
+    const fact = (k, v) => '<span class="muted">' + esc(k) + ':</span> ' + esc(v || '—');
+    foundPanel = '<div class="full"><div class="qc-note qc-note-blue" style="text-align:left">' +
+      '<strong>Case Found ✓</strong><br>' +
+      [fact('Product', ci.product), fact('Business Unit', ci.bu), fact('Current Step', ci.current_step),
+       fact('Dr Due', fmtDate(f.dr_due_date)), fact('Ship', fmtDate(f.ship_date))].join(' &nbsp;·&nbsp; ') +
+      '</div></div>';
+  }
+  // Reroute-step dropdown — only shown when "No expert" is selected.
+  let rerouteBlock = '';
+  if (state.needsExpert === false) {
+    const stepPlaceholder = state.caseSteps.length ? 'Select the step to reroute the case back to' : 'Enter a valid case number to load steps';
+    const stepOptions = '<option value="">' + esc(stepPlaceholder) + '</option>' +
+      state.caseSteps.map(s => '<option value="' + attr(s) + '"' + (s === state.rerouteStep ? ' selected' : '') + '>' + esc(s) + '</option>').join('');
+    rerouteBlock = '<div class="full"><label>Step to reroute case back to <span class="req"></span></label>' +
+      '<select class="cc-input"' + (state.caseSteps.length ? '' : ' disabled') + ' onchange="QCMODE.setRerouteStep(this.value)">' + stepOptions + '</select></div>';
+  }
   return '<div class="cc-form-card" style="max-width:none">' +
     '<div class="cc-form-grid">' +
       '<div class="full"><label>Case Number <span class="req"></span></label>' +
         '<input class="cc-input mono" data-draft="ir-casenum" type="text" placeholder="e.g. 2026-12345" value="' + attr(f.case_number) + '" oninput="QCMODE.setIr(\'case_number\', this.value)" onchange="QCMODE.lookupIrCase()">' + lookupNote + '</div>' +
-      '<div><label>Department <span class="req"></span></label>' +
-        '<select class="cc-input" onchange="QCMODE.setIr(\'department\', this.value)">' + optionList(DEPARTMENTS, f.department, 'Select dept') + '</select></div>' +
-      '<div><label>Your Name <span class="req"></span></label>' +
+      foundPanel +
+      '<div class="full"><label>Your Name <span class="req"></span></label>' +
         '<input class="cc-input" data-draft="ir-loggedby" type="text" placeholder="Your name" value="' + attr(f.logged_by) + '" oninput="QCMODE.setIr(\'logged_by\', this.value)"></div>' +
-      '<div><label>Technician (worked on product) <span class="req"></span></label>' +
-        '<input class="cc-input" data-draft="ir-tech" type="text" placeholder="Technician name" value="' + attr(f.technician) + '" oninput="QCMODE.setIr(\'technician\', this.value)"></div>' +
-      '<div><label>Step where issue occurred' + (state.irSteps.length ? ' <span class="req"></span>' : '') + '</label>' +
-        '<select class="cc-input"' + (state.irSteps.length ? '' : ' disabled') + ' onchange="QCMODE.setIr(\'issue_step\', this.value)">' + stepOptions + '</select></div>' +
-      '<div><label>Ship Date <span class="req"></span></label>' +
-        '<input class="cc-input" data-draft="ir-shipdate" type="date" value="' + attr(f.ship_date) + '" oninput="QCMODE.setIr(\'ship_date\', this.value)"></div>' +
-      '<div><label>Doctor Due Date <span class="req"></span></label>' +
-        '<input class="cc-input" data-draft="ir-drdue" type="date" value="' + attr(f.dr_due_date) + '" oninput="QCMODE.setIr(\'dr_due_date\', this.value)"></div>' +
-      '<div><label>Received Date <span class="qc-auto">auto</span></label>' +
-        '<input class="cc-input" type="date" value="' + attr(f.received_date) + '" readonly></div>' +
-      '<div><label>Start Date <span class="qc-auto">auto</span></label>' +
-        '<input class="cc-input" type="date" value="' + attr(f.start_date) + '" readonly></div>' +
-      '<div><label>Time in Lab <span class="qc-auto">auto</span></label>' +
-        '<input class="cc-input" type="text" value="' + attr(tilStr) + '" placeholder="—" readonly></div>' +
-      '<div><label>Total Invoice <span class="qc-auto">auto</span></label>' +
-        '<input class="cc-input" type="text" value="' + attr(invStr) + '" placeholder="—" readonly></div>' +
       '<div class="full"><label>Description of Issue <span class="req"></span></label>' +
         '<textarea class="cc-input" data-draft="ir-desc" rows="3" placeholder="Describe what went wrong and what needs to be fixed…" oninput="QCMODE.setIr(\'description\', this.value)">' + esc(f.description) + '</textarea></div>' +
       '<div class="full"><label>Need Technical Expert Assistance? <span class="req"></span></label>' +
-        '<div class="qc-yn-grid">' + yn(true, 'Yes', 'Notify tech experts') + yn(false, 'No', 'No expert needed') + '</div></div>' +
+        '<div class="qc-yn-grid">' + yn(true, 'Yes', 'Notify tech experts') + yn(false, 'No', 'Reroute it yourself') + '</div></div>' +
+      rerouteBlock +
     '</div>' +
     '<div class="qc-actions">' +
       '<button class="act blue" ' + (canSubmit && !state.irSaving ? '' : 'disabled') + ' onclick="QCMODE.submitIr()">' +
-        (state.irSaving ? 'Notifying…' : (state.needsExpert === true ? 'Notify Experts' : 'Done')) + '</button>' +
+        (state.irSaving ? 'Submitting…' : (state.needsExpert === true ? 'Submit & Notify Experts' : 'Submit Internal Remake')) + '</button>' +
     '</div></div>';
 }
 
@@ -325,7 +324,7 @@ function recentMrbTable() {
           : '<span class="cc-action-badge qc-repair">Final QC</span>';
         return '<tr>' +
           '<td class="case-id-cell">' + esc(r.case_number || '—') + '</td>' +
-          '<td>' + esc(r.team || '—') + '</td>' +
+          '<td>' + esc(r.department || '—') + '</td>' +
           '<td>' + esc(r.logged_by || '—') + '</td>' +
           '<td>' + badge + '</td>' +
           '<td class="muted">' + fmtDate(r.ship_date) + '</td>' +
@@ -346,7 +345,7 @@ async function refreshRecent() {
 }
 
 async function refreshMrb() {
-  try { state.recentMrb = await Data.listMrb(100); }
+  try { state.recentMrb = await Data.listInternalRemakes(100); }
   catch (e) { state.recentMrb = []; toast('Could not load internal remakes', 'err'); }
   state.recentMrbLoaded = true;
   render();
@@ -425,14 +424,16 @@ function resetQc() {
 }
 
 function setIr(k, v) { state.ir[k] = v; }
-function setNeedsExpert(val) { state.needsExpert = val; render(); }
+function setNeedsExpert(val) { state.needsExpert = val; if (val) state.rerouteStep = ''; render(); }
+function setRerouteStep(v) { state.rerouteStep = v; render(); }
 
-// Auto-populate the Internal Remake form from the case number (fired on change/blur of the case
-// field). Fills ship/due/received/start/time-in-lab/invoice and loads the case's steps for the
-// "step where issue occurred" dropdown. No-ops if the case is unchanged.
+// Look up the case when the case number is entered (change/blur). Loads the case
+// facts the Teams card needs (product/BU/current step), auto-fills ship/due dates,
+// and loads the case's steps for the "reroute back to" dropdown. Mirrors qc-app's
+// Cases + wip_cases + case_steps_dept_aox reads. No-ops if the case is unchanged.
 async function lookupIrCase() {
   const cn = (state.ir.case_number || '').trim();
-  if (!cn) { state.irSteps = []; state.irLookupStatus = ''; state.irLookupCase = ''; render(); return; }
+  if (!cn) { state.caseInfo = null; state.caseSteps = []; state.irLookupStatus = ''; state.irLookupCase = ''; render(); return; }
   if (cn === state.irLookupCase && state.irLookupStatus === 'found') return;  // already loaded
   state.irLookupLoading = true; state.irLookupStatus = ''; render();
   try {
@@ -441,15 +442,13 @@ async function lookupIrCase() {
       const f = state.ir;
       if (res.ship_date)   f.ship_date   = res.ship_date;
       if (res.dr_due_date) f.dr_due_date = res.dr_due_date;
-      f.received_date    = res.received_date || '';
-      f.start_date       = res.start_date || '';
-      f.time_in_lab_days = (res.time_in_lab_days ?? null);
-      f.total_invoice    = (res.total_invoice ?? null);
-      f.issue_step       = '';                       // make them re-pick for the new case
-      state.irSteps      = Array.isArray(res.steps) ? res.steps : [];
+      if (res.department)  f.department  = res.department;   // wip current_step_business_unit
+      state.caseInfo = { product: res.product, bu: res.bu, department: res.department, current_step: res.current_step };
+      state.caseSteps = Array.isArray(res.steps) ? res.steps : [];
+      state.rerouteStep = '';                                // re-pick for the new case
       state.irLookupStatus = 'found';
     } else {
-      state.irSteps = [];
+      state.caseInfo = null; state.caseSteps = [];
       state.irLookupStatus = 'notfound';
     }
     state.irLookupCase = cn;
@@ -461,43 +460,63 @@ async function lookupIrCase() {
 }
 async function submitIr() {
   const f = state.ir;
-  const stepRequiredOk = state.irSteps.length === 0 || !!f.issue_step;
-  const valid = f.case_number.trim() && f.department && f.logged_by.trim() && f.technician.trim() &&
-    f.ship_date && f.dr_due_date && f.description.trim() && stepRequiredOk && state.needsExpert !== null;
+  const rerouteOk = state.needsExpert !== false || !!state.rerouteStep;
+  const valid = f.case_number.trim() && f.logged_by.trim() && f.description.trim() &&
+    state.needsExpert !== null && rerouteOk;
   if (!valid || state.irSaving) return;
+  if (state.needsExpert === false && !state.rerouteStep) { toast('Select the step to reroute the case back to', 'err'); return; }
   state.irSaving = true; render();
+  const dept = f.department || (state.caseInfo && state.caseInfo.department) || '';
+  const ci = state.caseInfo || {};
   try {
-    // Persist EVERY submission to the MRB board for visibility — both expert and
-    // Final-QC routes (the one behavioral difference from qc-app_AOX).
-    await Data.createMrbEntry({
+    // 1) Always log to internal_remake_log (mirrors qc-app QCLogPage.jsx:345).
+    await Data.createInternalRemakeLog({
       case_number: f.case_number.trim(),
-      department: f.department,
+      department: dept,
       logged_by: f.logged_by.trim(),
-      technician: f.technician.trim(),
-      issue_step: f.issue_step || null,
-      ship_date: f.ship_date,
-      dr_due_date: f.dr_due_date,
-      received_date: f.received_date || null,
-      start_date: f.start_date || null,
-      time_in_lab_days: (f.time_in_lab_days ?? null),
-      total_invoice: (f.total_invoice ?? null),
+      ship_date: f.ship_date || null,
+      dr_due_date: f.dr_due_date || null,
       description: f.description.trim(),
       needs_expert: state.needsExpert,
     });
-    // Expert route mirrors qc-app_AOX: notify the technical experts by email.
-    // Final-QC route ("No") routes to Final QC — no email (see confirmation msg).
+    // 2) Expert route: stage the case (MRB Awaiting Claim queue) + email experts.
     if (state.needsExpert) {
+      await Data.createStagedCase({
+        case_number: f.case_number.trim(),
+        dr_due_date: f.dr_due_date || null,
+        ship_date: f.ship_date || null,
+        department: dept,
+        issue_summary: f.description.trim() || null,
+        staged_by: f.logged_by.trim() || null,
+        assigned_expert: null,
+        assigned_expert_email: null,
+      });
       EXPERTS.forEach(ex => Data.notifyExpertStaged({
         case_number: f.case_number.trim(),
         dr_due_date: f.dr_due_date,
         ship_date: f.ship_date,
-        department: f.department,
+        department: dept,
         issue_summary: f.description,
+        source_step: ci.current_step,
         staged_by: f.logged_by,
         assigned_expert: ex.name,
         assigned_expert_email: ex.email,
       }));
     }
+    // 3) Always send the Teams notification (expert and self-reroute).
+    Data.notifyTeams({
+      case_number: f.case_number.trim(),
+      product: ci.product,
+      bu: ci.bu,
+      department: dept,
+      current_step: ci.current_step,
+      dr_due_date: f.dr_due_date,
+      ship_date: f.ship_date,
+      logged_by: f.logged_by,
+      description: f.description,
+      needsExpert: state.needsExpert,
+      reroute_step: state.rerouteStep,
+    });
     state.irDone = true;
     toast('Internal remake submitted', 'ok');
     if (window.DraftGuard) window.DraftGuard.clearMatching('ir-');   // submitted — drop the saved IR draft
@@ -509,8 +528,8 @@ async function submitIr() {
   }
 }
 function resetIr() {
-  state.ir = { ...EMPTY_IR }; state.needsExpert = null; state.irDone = false; state.irSaving = false;
-  state.irSteps = []; state.irLookupCase = ''; state.irLookupStatus = ''; state.irLookupLoading = false;
+  state.ir = { ...EMPTY_IR }; state.needsExpert = null; state.rerouteStep = ''; state.irDone = false; state.irSaving = false;
+  state.caseInfo = null; state.caseSteps = []; state.irLookupCase = ''; state.irLookupStatus = ''; state.irLookupLoading = false;
   if (window.DraftGuard) window.DraftGuard.clearMatching('ir-');   // fresh form — discard any saved draft
   render();
 }
@@ -518,7 +537,7 @@ function resetIr() {
 const QCMODE = {
   renderQcMode,
   setTab, setStep, setQc, setTeam, setDrDue, submitQc, stage, resetQc,
-  setIr, setNeedsExpert, submitIr, resetIr, lookupIrCase,
+  setIr, setNeedsExpert, setRerouteStep, submitIr, resetIr, lookupIrCase,
 };
 if (typeof window !== 'undefined') window.QCMODE = QCMODE;
 export default QCMODE;

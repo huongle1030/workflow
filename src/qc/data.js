@@ -7,6 +7,7 @@
 // key can read/write them. Attribution is client-stamped (the data path sends
 // the publishable key, not the user JWT).
 import { getCurrentEmployee } from '../auth.js';
+import { supabase } from '../supabase.js';
 import { EDGE_ANON_KEY } from './constants.js';
 
 function cfg() {
@@ -78,61 +79,76 @@ export async function createStagedCase(fields) {
   });
 }
 
-// Insert an Internal Remake submission into the existing public.mrb_cases table
-// (the MRB review workflow). Stores EVERY submission (needs_expert true and
-// false). Maps the form onto mrb_cases columns and seeds the MRB workflow
-// defaults (source='internal', status='Open', disposition='Pending', opened_date
-// = today); the MRB reviewer fills severity/fault/root_cause/etc. later.
-function todayDate() {
-  const d = new Date();
-  const p = n => ('0' + n).slice(-2);
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
-}
-export async function createMrbEntry(f) {
+// Insert an Internal Remake submission into public.internal_remake_log — the SAME
+// table and columns the qc-app writes (see qc-app_AOX QCLogPage.jsx:345-355).
+// Stores EVERY submission (needs_expert true and false). The expert path ALSO
+// stages the case (createStagedCase) so it appears in the MRB Awaiting Claim queue.
+export async function createInternalRemakeLog(f) {
+  const now = new Date().toISOString();
   const body = {
     case_number: f.case_number,
-    source: 'internal',
-    team: f.department,
-    defect_description: f.description,
-    logged_by: f.logged_by,
-    // Internal Remake additions: technician who worked on the product, the step the issue occurred
-    // on, and the case facts auto-populated from qc_case_lookup.
-    technician: f.technician || null,
-    issue_step: f.issue_step || null,
-    ship_date: f.ship_date,
-    dr_due_date: f.dr_due_date,
-    received_date: f.received_date || null,
-    start_date: f.start_date || null,
-    time_in_lab_days: (f.time_in_lab_days ?? null),
-    total_invoice: (f.total_invoice ?? null),
+    department: f.department || '',
+    logged_by: f.logged_by || null,
+    ship_date: f.ship_date || null,
+    dr_due_date: f.dr_due_date || null,
+    description: f.description || null,
     needs_expert: f.needs_expert,
-    status: 'Open',
-    disposition: 'Pending',
-    opened_date: todayDate(),
+    time_stamp: now,
+    created_date: now,
   };
-  await rest('/rest/v1/mrb_cases', {
+  await rest('/rest/v1/internal_remake_log', {
     method: 'POST',
     headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }),
     body: JSON.stringify([body]),
   });
 }
 
-// One-call case lookup for the Internal Remake form (auto-populate + the step dropdown).
-// Returns the qc_case_lookup JSON ({ found, ship_date, dr_due_date, received_date, start_date,
-// time_in_lab_days, total_invoice, steps:[...] }) or { found:false } when the case isn't on file.
+// Case lookup for the Internal Remake form — the case facts the Teams card needs
+// plus the de-duplicated production steps for the "reroute back to" dropdown.
+// Mirrors qc-app's three reads (Cases + wip_cases + case_steps_dept_aox) via the
+// supabase client (it handles the quoted, space-named master-table columns). The
+// suite's anon JWT is the same key the qc-app uses, so these reads are permitted.
 export async function lookupCaseForRemake(caseNumber) {
-  const res = await rest('/rest/v1/rpc/qc_case_lookup', {
-    method: 'POST',
-    headers: headers({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ p_case_number: caseNumber }),
-  });
-  return res || { found: false };
+  const cn = (caseNumber || '').trim();
+  const [caseRes, wfRes] = await Promise.all([
+    supabase.from('Cases')
+      .select('"Case Number","Business Unit","Primary Product","Doctor Due Date","Ship Date","Received Date","Hold Flag","Hold Reason"')
+      .eq('Case Number', cn).maybeSingle(),
+    supabase.from('wip_cases')
+      .select('current_step_name, current_step_business_unit')
+      .eq('case_number', cn).maybeSingle(),
+  ]);
+  if (!caseRes.data) return { found: false };
+  const c = caseRes.data;
+  const wf = wfRes.data || {};
+  const { data: steps } = await supabase
+    .from('case_steps_dept_aox')
+    .select('step_consolidated, start_date, status')
+    .eq('case_number', cn)
+    .order('start_date', { ascending: true });
+  const seen = new Set();
+  const stepList = (steps || []).filter(s => {
+    if (!s.step_consolidated || seen.has(s.step_consolidated)) return false;
+    seen.add(s.step_consolidated); return true;
+  }).map(s => s.step_consolidated);
+  const slice10 = v => (v ? String(v).slice(0, 10) : null);
+  return {
+    found: true,
+    case_number: c['Case Number'],
+    product: c['Primary Product'] || null,
+    bu: c['Business Unit'] || null,
+    department: wf.current_step_business_unit || null,
+    current_step: wf.current_step_name || null,
+    dr_due_date: slice10(c['Doctor Due Date']),
+    ship_date: slice10(c['Ship Date']),
+    steps: stepList,
+  };
 }
 
-// Latest internal-remake rows for the dashboard. Reads mrb_cases (source=internal)
-// for now — internal_remake_log is the eventual read source but isn't synced yet.
-export async function listMrb(limit = 100) {
-  const rows = await rest('/rest/v1/mrb_cases?select=*&source=eq.internal&order=created_date.desc.nullslast&limit=' + limit, { headers: headers() });
+// Latest internal-remake rows for the dashboard. Reads internal_remake_log (the
+// table createInternalRemakeLog writes), newest first.
+export async function listInternalRemakes(limit = 100) {
+  const rows = await rest('/rest/v1/internal_remake_log?select=*&order=created_date.desc.nullslast&limit=' + limit, { headers: headers() });
   return rows || [];
 }
 
@@ -145,5 +161,44 @@ export function notifyExpertStaged(body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: EDGE_ANON_KEY },
     body: JSON.stringify(body),
+  }).catch(() => {});
+}
+
+// Best-effort Teams MessageCard via the notify-teams edge function — sent on EVERY
+// Internal Remake submission (expert and self-reroute), matching qc-app's
+// sendTeamsNotification (QCLogPage.jsx:239-280). Never throws.
+export function notifyTeams(data) {
+  const c = cfg();
+  const payload = {
+    '@type': 'MessageCard',
+    '@context': 'http://schema.org/extensions',
+    themeColor: data.needsExpert ? '534AB7' : '10B981',
+    summary: 'Internal Remake — ' + data.case_number,
+    sections: [{
+      activityTitle: '🔄 Internal Remake — ' + data.case_number,
+      activitySubtitle: data.needsExpert
+        ? '🔴 Expert Assistance Required — case staged for review'
+        : '🟢 Self Rerouted by ' + (data.logged_by || 'lead') + ' → ' + (data.reroute_step || '—'),
+      facts: [
+        { name: 'Case #',        value: data.case_number },
+        { name: 'Product',       value: data.product || '—' },
+        { name: 'Business Unit', value: data.bu || '—' },
+        { name: 'Department',    value: data.department || '—' },
+        { name: 'Current Step',  value: data.current_step || '—' },
+        { name: 'Doctor Due',    value: data.dr_due_date || '—' },
+        { name: 'Ship Date',     value: data.ship_date || '—' },
+        { name: 'Logged By',     value: data.logged_by || '—' },
+        { name: 'Description',   value: data.description || '—' },
+        ...(data.needsExpert
+          ? [{ name: 'Action', value: 'Jeannette, Ryan & Deepak have been notified' }]
+          : [{ name: 'Reroute To', value: data.reroute_step || '—' }]),
+      ],
+      markdown: true,
+    }],
+  };
+  return fetch(c.url + '/functions/v1/notify-teams', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: EDGE_ANON_KEY, Authorization: 'Bearer ' + EDGE_ANON_KEY },
+    body: JSON.stringify(payload),
   }).catch(() => {});
 }
