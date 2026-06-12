@@ -1155,6 +1155,20 @@ function splitEmailThread(text) {
   return out;
 }
 
+// A comm body may be plain text (scraped office email) or HTML (our own composed outbound, stored as
+// body_html). Convert HTML to readable plain text — block-level tags become line breaks — so the
+// Most Recent Communication card never shows raw <p>/<span>/<a> markup. Plain text is returned as-is
+// (entities decoded). Detection requires an actual tag pattern so prose like "a < b" stays untouched.
+function commBodyToText(raw) {
+  const s = (raw || '').replace(/\r\n?/g, '\n');
+  if (!/<\/?[a-z][a-z0-9]*[\s/>]/i.test(s)) return decodeHtmlEntities(s);
+  const div = document.createElement('div');
+  div.innerHTML = s;
+  div.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+  div.querySelectorAll('p, div, li, tr, h1, h2, h3, h4, blockquote').forEach(el => el.append('\n'));
+  return (div.textContent || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // Wrap any bare exocad webview URLs in <a> tags so the link is clickable in
 // the preview even when the email template pasted it as plain text.
 // Also strips the in-body "View Design in exocad WebView" button — the
@@ -1929,9 +1943,11 @@ function renderOutboundCard(r) {
     // of Account Preferences.
     // For emails, split the thread into individual message bodies (headers stripped) so a
     // long reply chain is easy to read; phone/note media show as a single cleaned block.
+    // commBodyToText first flattens any HTML body to plain text so raw tags never leak through.
+    const commBody = commBodyToText(r.most_recent_comm_body);
     const commMessages = (r.most_recent_comm_medium === 'email')
-      ? splitEmailThread(r.most_recent_comm_body || '')
-      : [decodeHtmlEntities((r.most_recent_comm_body || '').replace(/\r\n?/g, '\n')).trim()].filter(Boolean);
+      ? splitEmailThread(commBody)
+      : [commBody.trim()].filter(Boolean);
     const commSubject = (r.most_recent_comm_subject || '').trim();
     const hasNote = !!(commMessages.length || commSubject);
     const COMM_MEDIUM_ICON = { phone: '📞', email: '✉️', note: '📝' };
@@ -2368,9 +2384,10 @@ function renderFullArchWipCard(r) {
     ? '<span class="activity-chip miss">⚠ Will miss due date · ' + r.days_late_if_approved_now + 'd late</span>'
     : '';
   // Most Recent Communication card (same shape as the outbound card's).
+  const commBody = commBodyToText(r.most_recent_comm_body);
   const commMessages = (r.most_recent_comm_medium === 'email')
-    ? splitEmailThread(r.most_recent_comm_body || '')
-    : [decodeHtmlEntities((r.most_recent_comm_body || '').replace(/\r\n?/g, '\n')).trim()].filter(Boolean);
+    ? splitEmailThread(commBody)
+    : [commBody.trim()].filter(Boolean);
   const commSubject = (r.most_recent_comm_subject || '').trim();
   const hasNote = !!(commMessages.length || commSubject);
   const COMM_MEDIUM_ICON = { phone: '📞', email: '✉️', note: '📝' };
