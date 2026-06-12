@@ -2055,6 +2055,7 @@ function renderOutboundCard(r) {
         `}
         <div class="actions">
           ${hasExocadLink ? `<button class="act view-exocad" onclick="window.open('${esc(r.exocad_viewer_url)}', '_blank', 'noopener')">View in Exocad</button>` : ''}
+          ${hasExocadLink && !isScanAck ? `<button class="act ghost" title="Remove this exocad link (wrong design / wrong case) so you can paste the correct one" onclick="removeExocadLink('${esc(r.case_number || '')}')">Remove link</button>` : ''}
           <button class="act approve" onclick="approve('${r.attempt_id}')" ${!toOk ? 'disabled title="Add at least one valid recipient first"' : (needsCompose ? 'disabled title="Write the email first — use Edit Then Send"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : ''))}>Approve &amp; Send</button>
           <button class="act edit" onclick="showEdit('${r.attempt_id}')" ${!toOk ? 'disabled title="Add at least one valid recipient first"' : (uploading ? 'disabled title="Wait for the attachment upload to finish"' : '')}>Edit Then Send</button>
           <button class="act slate" onclick="openDraftReselect('${r.attempt_id}', '${esc(r.case_number || '')}')" title="Replace this draft with a fresh one from a different template">Select draft</button>
@@ -3394,12 +3395,44 @@ async function saveExocadLink(caseNumber, rawUrl) {
       const txt = await res.text();
       throw new Error('Upsert failed: ' + res.status + ' ' + txt);
     }
-    // Also re-render the pending draft for this case so the new link button shows up
-    await callRpc('recompose_pending_for_case', { p_case_number: caseNumber }).catch(() => {});
+    // No server recompose: exocad_viewer_url reaches the card via a live join on
+    // case_exocad_links (v_pending_outbound) and the link is rendered into the body
+    // client-side by buildOutboundBody(). loadAll() below surfaces it. We must NOT call
+    // recompose_pending_for_case here — it DELETEs the pending attempt (cascade-deleting
+    // the coordinator's uploaded photos) and rebuilds a fresh one, wiping typed recipients
+    // and body edits. That made link-saving destructive unless done before adding photos/emails.
     toast('Link saved · draft refreshed', 'ok');
     await loadAll();
   } catch (e) {
     alert('Could not save link: ' + e.message);
+  }
+}
+// Remove a wrong/stale exocad viewer link from a case. The link is stored once per case in
+// case_exocad_links and reaches the draft via a live join (v_pending_outbound), so deleting the
+// row clears the "Direct link"/"View in Exocad" off every pending draft for the case on the next
+// load. After removal the paste-a-link gate reappears so the coordinator can enter the correct URL.
+// Non-destructive to the draft itself: the attempt id is untouched, so photos/recipients/body stay.
+async function removeExocadLink(caseNumber) {
+  if (!caseNumber) return;
+  if (!confirm('Remove the exocad link from case ' + caseNumber + '? You can paste the correct one afterward.')) return;
+  try {
+    const cfg = getConfig();
+    const res = await fetch(cfg.url.replace(/\/+$/, '') + '/rest/v1/case_exocad_links?case_number=eq.' + encodeURIComponent(caseNumber), {
+      method: 'DELETE',
+      headers: {
+        apikey: cfg.key,
+        Authorization: 'Bearer ' + cfg.key,
+        Prefer: 'return=minimal',
+      },
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error('Delete failed: ' + res.status + ' ' + txt);
+    }
+    toast('Link removed · paste the correct one below', 'ok');
+    await loadAll();
+  } catch (e) {
+    alert('Could not remove link: ' + e.message);
   }
 }
 async function reject(id) {
@@ -6796,7 +6829,7 @@ Object.assign(window, {
   // Hidden senders
   toggleHiddenSenders, addHiddenSender, removeHiddenSender, closeHiddenSenders,
   // Outbound actions
-  toggleItem, approve, showEdit, hideEdit, resummarize, reject, saveEdit, saveExocadLink,
+  toggleItem, approve, showEdit, hideEdit, resummarize, reject, saveEdit, saveExocadLink, removeExocadLink,
   composeOutreachForCase, openOutreachReasonPicker, closeOutreachReasonPicker, submitOutreachReason,
   onToInput, onCcInput, openDraftReselect,
   // Inbound actions

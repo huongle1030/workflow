@@ -97,6 +97,7 @@
 }
 .qc-note-purple { background: #EEEDFE; border: 1.5px solid #534AB7; color: #3a338f; }
 .qc-note-green { background: #EAF3DE; border: 1.5px solid #97C459; color: #2f570e; }
+.qc-note-blue { background: #E6F1FB; border: 1.5px solid #85B7EB; color: #185FA5; }
 
 /* Action button row */
 .qc-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
