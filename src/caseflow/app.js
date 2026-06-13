@@ -648,8 +648,14 @@ function ccAddons(a) {
 // CC New main options (idx 2+ of CC_NEW, single-select into ccOption) + add-ons.
 function ccNewOptions(a) {
   const items = OPTS.CC_NEW;
+  // Main options are idx 2+. Array indices are stable (stored in a.ccOption); we only
+  // reorder for display so the Hybrid option shows directly under Zirconia (idx 2).
+  const order = [];
+  for (let i = 2; i < items.length; i++) order.push(i);
+  const hi = items.findIndex(x => x.startsWith('Hybrid'));
+  if (hi > 2) { const pos = order.indexOf(hi); if (pos > -1) { order.splice(pos, 1); order.splice(1, 0, hi); } }
   let html = ccAddons(a) + '<span class="sec-label">Select option</span>';
-  for (let i = 2; i < items.length; i++) html += `<div class="opt-row${a.ccOption === i ? ' sel' : ''}" data-aox-field="CC_NEW" data-aox-val="${i}"><input type="radio" ${a.ccOption === i ? 'checked' : ''}><span class="opt-row-label">${items[i]}</span></div>`;
+  for (const i of order) html += `<div class="opt-row${a.ccOption === i ? ' sel' : ''}" data-aox-field="CC_NEW" data-aox-val="${i}"><input type="radio" ${a.ccOption === i ? 'checked' : ''}><span class="opt-row-label">${items[i]}</span></div>`;
   return html;
 }
 function buildCCRecipe(a) { if (a.cat !== 'CC' || !isSet(a.ccType)) return ''; const isNew = a.ccType === 0, digSet = isSet(a.rcpDigital), noKey = isNew ? 'RCP_NO_NEW' : 'RCP_NO_CONT'; return `<div class="recipe-block"><div class="recipe-block-title"><i class="ti ti-chef-hat" style="font-size:14px"></i> Recipe Selection</div><span class="sec-label" style="margin-top:0">Digital Workflow?</span>${typeGrid(['Yes', 'No'], digSet ? a.rcpDigital : -1, 'rcpDigital')}${digSet && a.rcpDigital === 0 ? `<span class="sec-label">Select workflow</span>${optRows('RCP_DIG_YES', isSet(a.rcpOption) ? a.rcpOption : -1)}` : ''}${digSet && a.rcpDigital === 1 ? `<span class="sec-label">Select option</span>${optRows(noKey, isSet(a.rcpOption) ? a.rcpOption : -1)}` : ''}</div>`; }

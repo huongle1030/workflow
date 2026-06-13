@@ -24,7 +24,7 @@ export const ASP_SCREW_OPTS = ['OI Nobel', 'OI Straumann', 'OI Neodent (ClearCho
 export const TRI_SCAN_SECTIONS = ['Preop U/L', 'Opposing', 'Bite Scans', 'Photos'];
 
 export const OPTS = {
-  CC_NEW: ['DAVINCI Finish *Endura Elite*', 'ClearChoice ICAM fee ADD on (ICAM cases only)', 'Zirconia *Endura* (12 days) — Oss Final Zirconia + Clear Choice Stage 2 + Aesthetic charge', 'Temporary Try In (PMMA) (12 working days) — One Suite Smile PMMA + One Suite Smile Stage 4', 'STL FILE (6 working days) — Oss Final Zirconia + Clear Choice Stage 1'],
+  CC_NEW: ['DAVINCI Finish *Endura Elite*', 'ClearChoice ICAM fee ADD on (ICAM cases only)', 'Zirconia *Endura* (12 days) — Oss Final Zirconia + Clear Choice Stage 2 + Aesthetic charge', 'Temporary Try In (PMMA) (12 working days) — One Suite Smile PMMA + One Suite Smile Stage 4', 'STL FILE (6 working days) — Oss Final Zirconia + Clear Choice Stage 1', 'Hybrid ( PMMA W/Bar)*Essential*(12 days) - Digital Hybrid with Bar'],
   CC_CONT: ['Zirconia *continuation from models* (12 working days) — One Suite Smile Final Zirconia + Aesthetic Charge', 'Zirconia *continuation from STL design only* — Clear Choice Stage 2 + Aesthetic Charge', 'Temporary Try In (PMMA) (12 working days) — One Suite Smile Stage 4'],
   RCP_DIG_YES: ['ICAM / Exact (NO JIG)', 'EXACT Workflow (JIG Used)'],
   RCP_NO_NEW: ['Zirconia — Scans & Models ONLY', 'Zirconia — Scans/Models AND PMMA', 'PMMA — Analog milled (no mounting)', 'PMMA — Analog milled (needs mounting)', 'Full Digital (Exact Workflow)', 'STL File — Digital', 'STL File — Analog'],
@@ -44,12 +44,12 @@ export const OPTS = {
   SKD_RCP_VJ: ['Analog (Impressions received)', 'Digital (Scans only received)'],
   ENG_FINAL: ['PMMA — One Suite Smile PMMA + Stage 4', 'Zirconia — One Suite Smile Zirconia Final', 'Stackable surgical guide + Add on (if requested)', 'Surgical Guide Singles — CT Scan — Toothborn Single Site + Sleeves'],
   ENG_SURGICAL: ['Stackable — Stackable Surgical Guides (Engel)', 'PMMA Add On — Stackable Printed Provisional (Engel)', 'Denture Add On — Printed Full Denture — AOX Add On'],
-  TRI_IMPLANT_OPTS: ['Send STL — Full Service Full Arch Lab 1 + TRI Stage 1 (6 days)', 'PMMA — Full Service Full Arch Lab 1 + TRI Stage 2 (10/12 days)', 'Zirconia Esthetic — Full Service Full Arch Lab 1 + TRI Stage 3 (10/12 days)', 'Zirconia High Esthetic — Full Service Full Arch HIGH Lab 1 + TRI Stage 3 (10/12 days)'],
-  TRI_NON_IMPLANT_OPTS: ['Send STL — Full Service Full Arch Lab 1-NON TRI + TRI Stage 1 (6 days)', 'PMMA — Full Service Full Arch Lab 1-NON TRI + TRI Stage 2 (10/12 days)', 'Zirconia Esthetic — Full Service Full Arch Lab 1-NON TRI + TRI Stage 3 (10/12 days)', 'Zirconia High Esthetic — Full Service Full Arch HIGH Lab 1-NON TRI + TRI Stage 3 (10/12 days)'],
-  TRI_CONT_OPTS: ['Send STL — TRI Stage 1 (6 days)', 'PMMA — TRI Stage 2 (10/12 days)', 'Zirconia — TRI Stage 3 (10/12 days)'],
-  TRI_PRE_TRI_OPTS: ['Pre-Design Full Service Full Arch (8 days)', 'Pre-Design Full Service Full Arch (8 days)', 'Mill and Sinter Only Full Arch (6 days)'],
-  TRI_PRE_NONTRI_OPTS: ['Pre-Design Full Service Full Arch Lab 1-Non TRI (8 days)', 'Pre-Design Full Service Full Arch-Non TRI (8 days)'],
-  TRI_SINGLE_OPTS: ['Full Service Single Unit (7 days) — Include Analog Code (P45/P37)', 'Mill and Sinter Single Unit (5 days) — Do NOT Include Analog Code'],
+  TRI_IMPLANT_OPTS: ['Send STL — Full Service Full Arch Lab 1 + TRI Stage 1 Workflow - design only (6 days)', 'PMMA — Full Service Full Arch Lab 1 + TRI Stage 2 Workflow - Temp Only (10 working days/12 days if design approval is required)', 'Zirconia Esthetic — Full Service Full Arch Lab 1 + TRI Stage 3 Workflow - Final Zirconia (10 working days/12 days if design approval is required)', 'Zirconia High Esthetic — Full Service Full Arch HIGH Lab 1 + TRI Stage 3 Workflow - Final Zirconia (10 working days/12 days if design approval is required)'],
+  TRI_NON_IMPLANT_OPTS: ['Send STL — Full Service Full Arch Lab 1-NON TRI + TRI Stage 1 Workflow - design only (6 days)', 'PMMA — Full Service Full Arch Lab 1-NON TRI + TRI Stage 2 Workflow - Temp Only (10 working days/12 days if design approval is required)', 'Zirconia Esthetic — Full Service Full Arch Lab 1-NON TRI + TRI Stage 3 Workflow - Final Zirconia (10 working days/12 days if design approval is required)', 'Zirconia High Esthetic — Full Service Full Arch HIGH Lab 1-NON TRI + TRI Stage 3 Workflow - Final Zirconia (10 working days/12 days if design approval is required)'],
+  TRI_CONT_OPTS: ['Send STL — TRI Stage 1 Workflow - Design Only (6 working days)', 'PMMA — TRI Stage 2 Workflow - Temp Only (10 working days/12 days if design approval is required)', 'Zirconia — TRI Stage 3 Workflow - Final Zirconia (10 working days/12 days if design approval is required)'],
+  TRI_PRE_TRI_OPTS: ['Pre-Design Full Service Full Arch (8 working days)', 'Mill and Sinter Only Full Arch (6 working days)'],
+  TRI_PRE_NONTRI_OPTS: ['Pre-Design Full Service Full Arch Lab 1-Non TRI (8 working days)', 'Pre-Design Full Service Full Arch-Non TRI (8 working days)'],
+  TRI_SINGLE_OPTS: ['Full Service Single Unit (7 working days) — Include Analog Code (P45/P37)', 'Mill and Sinter Single Unit (5 working days) — Do NOT Include Analog Code'],
   TRI_RCP_ARCH: ['TRI — No Approval', 'TRI — Design Approval'],
   ADDON: ['Printed Full Denture — AOX add on', 'Nightguard — Comfort (hard/soft)']
 };
