@@ -39,6 +39,10 @@ let selectedMode = null;     // which mode currently owns the open detail
 let selectedCaseId = null;   // c.id of the open case (or null -> queue)
 let qcSel = null, adjSel = null;
 let rushState = false;       // New Case modal rush toggle
+let uploadsInFlight = 0;     // # of file uploads currently in progress (gates Case Review routing)
+// Block routing while uploads are still running, so a case is never passed on with
+// files that haven't finished uploading.
+function uploadsBusy() { if (uploadsInFlight > 0) { toast('Please wait — files are still uploading.'); return true; } return false; }
 
 // mode -> { panel id, queue stages, queue title }
 const MODES = {
@@ -358,10 +362,12 @@ function renderCaseReviewQueue() {
   const designReturn = cr.filter(c => crBucketOf(c) === 'design_return');
   const holdMissing = cr.filter(c => crBucketOf(c) === 'hold_missing');
   const ta = cr.filter(c => crBucketOf(c) === 'ta');
-  const main = cr.filter(c => !crBucketOf(c)); // plain Review + Case Coordination
-  const tabs = [['main', 'Case Review', main.length], ['design_return', 'Cases sent back from Design', designReturn.length], ['hold_missing', 'Holds for missing information', holdMissing.length], ['ta', 'Technical advisor', ta.length]]
+  const manager = cr.filter(c => crBucketOf(c) === 'manager');
+  const coordination = cr.filter(c => c.stage === 'Case Coordination');
+  const main = cr.filter(c => c.stage !== 'Case Coordination' && !crBucketOf(c)); // plain Review only
+  const tabs = [['main', 'Case Review', main.length], ['design_return', 'Cases sent back from Design', designReturn.length], ['hold_missing', 'Holds for missing information', holdMissing.length], ['coordination', 'Case Coordination for missing info', coordination.length], ['ta', 'Technical advisor', ta.length], ['manager', 'Manager Review', manager.length]]
     .map(t => `<button class="de-tab${crTab === t[0] ? ' active' : ''}" onclick="CF.setCrTab('${t[0]}')">${t[1]}<span class="de-tab-count">${t[2]}</span></button>`).join('');
-  const list = sortByShip(crTab === 'design_return' ? designReturn : (crTab === 'hold_missing' ? holdMissing : (crTab === 'ta' ? ta : main)));
+  const list = sortByShip(crTab === 'design_return' ? designReturn : (crTab === 'hold_missing' ? holdMissing : (crTab === 'ta' ? ta : (crTab === 'manager' ? manager : (crTab === 'coordination' ? coordination : main)))));
   const head = `<div style="font-size:16px;font-weight:600;margin-bottom:12px">Case Review</div>`;
   return head + `<div class="de-tabs">${tabs}</div>` + queueSearchBar() + (list.length ? tblWrap(list, 'casereview') : emptyMsg('No cases here'));
 }
@@ -584,7 +590,9 @@ function aspPick(id, key, accept) { pickFiles(async files => { const ok = filter
 function togglePredesigned(id) { const r = getR(id); r.predesigned = !r.predesigned; rebuildAoxReview(id); }
 async function uploadReviewFiles(id, key, files) {
   const c = getC(id); const r = getR(id); if (!r.aspFiles) r.aspFiles = {}; if (!r.aspFiles[key]) r.aspFiles[key] = [];
-  for (const f of files) { try { const meta = await Data.uploadFile(c, 'review', f, key); r.aspFiles[key].push({ name: meta.name, size: meta.size, path: meta.path }); } catch (e) { toast('Upload failed: ' + e.message); } }
+  uploadsInFlight++;
+  try { for (const f of files) { try { const meta = await Data.uploadFile(c, 'review', f, key); r.aspFiles[key].push({ name: meta.name, size: meta.size, path: meta.path }); } catch (e) { toast('Upload failed: ' + e.message); } } }
+  finally { uploadsInFlight--; }
   rebuildAoxReview(id);
 }
 function aspRemoveFile(id, key, idx) { const r = getR(id); if (r.aspFiles && r.aspFiles[key]) { r.aspFiles[key].splice(idx, 1); rebuildAoxReview(id); } }
@@ -935,7 +943,7 @@ function renderCaseDetail(c) {
     // Case in a Case-Review bucket: sent back from Design, on hold, or escalated to
     // the Technical Advisor. Shows DE + Case Review selections, every uploaded file,
     // a "Missing info" upload zone, a clarification note, and the routing buttons.
-    const bucketLabel = crBucket === 'design_return' ? 'Sent back from Design' : (crBucket === 'hold_missing' ? 'On hold for missing information' : 'Escalated to Technical Advisor');
+    const bucketLabel = crBucket === 'design_return' ? 'Sent back from Design' : crBucket === 'hold_missing' ? 'On hold for missing information' : crBucket === 'manager' ? 'Escalated to Manager' : 'Escalated to Technical Advisor';
     const crReviewFilesHtml = c.reviewFiles.map((f, i) => fileRow(f, i, 'review', 'file')).join('')
       + (r.aspFiles ? Object.keys(r.aspFiles).filter(k => k !== 'missing_info').map(k => (r.aspFiles[k] || []).map((f, i) => aspFileRow(f, k, i)).join('')).join('') : '');
     const miFiles = (r.aspFiles && r.aspFiles.missing_info) || [];
@@ -958,7 +966,9 @@ function renderCaseDetail(c) {
       <div class="actions-bar">
         <button class="btn btn-primary" onclick="CF.crSendToDesign('${c.id}')"><i class="ti ti-arrow-right"></i> Send back to design with new files/clarification</button>
         <button class="btn" onclick="CF.crHoldMissing('${c.id}')"><i class="ti ti-player-pause"></i> Place on hold for missing information</button>
-        <button class="btn" onclick="CF.showTaNotes()"><i class="ti ti-user-up"></i> Escalate to TA</button>
+        ${crBucket === 'ta'
+          ? `<button class="btn" onclick="CF.crEscalateManager('${c.id}')"><i class="ti ti-user-up"></i> Escalate to Manager</button>`
+          : `<button class="btn" onclick="CF.showTaNotes()"><i class="ti ti-user-up"></i> Escalate to TA</button>`}
         <button class="btn btn-scan" onclick="CF.crPassToScanning('${c.id}')"><i class="ti ti-scan"></i> Pass to Scanning team</button>
       </div>
       <div id="ta-notes-block" style="display:none;margin-top:12px">
@@ -982,11 +992,16 @@ function renderCaseDetail(c) {
       <button class="btn btn-primary" onclick="CF.passToDesign('${c.id}')"><i class="ti ti-arrow-right"></i> Pass to Design</button>
       <button class="btn btn-scan" onclick="CF.passToScanning('${c.id}')"><i class="ti ti-scan"></i> Pass to Scanning</button>
       <button class="btn" onclick="CF.showCoordReason()"><i class="ti ti-player-pause"></i> Place on Hold &amp; Send to Case Coordination</button>
+      <button class="btn" onclick="CF.showTaReason()"><i class="ti ti-user-up"></i> Send to TA</button>
       <button class="btn" onclick="CF.showReturnReason()"><i class="ti ti-arrow-back-up"></i> Place on Hold &amp; Send Back to Data Entry for Missing Information</button>
     </div>
     <div id="coord-reason-block" style="display:none;margin-top:12px">
       <div class="form-group"><label>Reason for Sending to Case Coordination</label><textarea id="coord-reason" placeholder="Enter reason for sending to Case Coordination..."></textarea></div>
       <div class="actions-bar"><button class="btn btn-primary" onclick="CF.sendToCoordination('${c.id}')"><i class="ti ti-send"></i> Confirm — Place on Hold</button></div>
+    </div>
+    <div id="ta-reason-block" style="display:none;margin-top:12px">
+      <div class="form-group"><label>Reason for Sending to TA</label><textarea id="cr-ta-notes" placeholder="Enter reason for sending to the Technical Advisor...">${esc(r.taNotes || '')}</textarea></div>
+      <div class="actions-bar"><button class="btn btn-primary" onclick="CF.crEscalateTa('${c.id}')"><i class="ti ti-send"></i> Confirm — Send to TA</button></div>
     </div>
     <div id="return-de-block" style="display:none;margin-top:12px">
       <div class="form-group"><label>Missing / Incorrect Information for Data Entry</label><textarea id="return-de-reason" placeholder="Describe what is missing or incorrect so Data Entry can correct it...">${esc((a && a.returnReason) || '')}</textarea></div>
@@ -1100,8 +1115,8 @@ function afterDetailRender(c) {
 }
 
 // ── transitions / actions (ported) ──────────────────────────────────
-function passToDesign(id) { saveReviewNotes(id); advanceStage(id, 'Design Check', 'Files reviewed — passed to Design team', 'Case Review Team'); }
-function passToScanning(id) { saveReviewNotes(id); advanceStage(id, 'Scanning', 'Passed to Scanning team', 'Case Review Team'); }
+function passToDesign(id) { if (uploadsBusy()) return; saveReviewNotes(id); advanceStage(id, 'Design Check', 'Files reviewed — passed to Design team', 'Case Review Team'); }
+function passToScanning(id) { if (uploadsBusy()) return; saveReviewNotes(id); advanceStage(id, 'Scanning', 'Passed to Scanning team', 'Case Review Team'); }
 
 // Case Review folder export: <case#>/ { scans/<review scan files>, Case Review
 // Checklist.txt, design notes.txt, <data entry files> }. File bytes are pulled
@@ -1188,10 +1203,15 @@ async function exportDesignZip(id) {
   toast('Preparing ' + folder + '.zip…');
   await buildAndDownloadZip(folder + '.zip', entries, toast);
 }
-function showCoordReason() { const b = document.getElementById('coord-reason-block'); if (b) b.style.display = 'block'; }
-function sendToCoordination(id) { const c = getC(id); if (!c) return; saveReviewNotes(id); const ta = document.getElementById('coord-reason'); c.coordReason = ta ? ta.value.trim() : ''; advanceStage(id, 'Case Coordination', 'Placed on hold — sent to Case Coordination' + (c.coordReason ? ': ' + c.coordReason : ''), 'Case Review Team'); }
-function showReturnReason() { const b = document.getElementById('return-de-block'); if (b) b.style.display = 'block'; }
+// Case Review routing is single-select: revealing one route's reason box hides the
+// others, so only one destination can be chosen at a time.
+function crShowRouteBlock(which) { ['coord-reason-block', 'ta-reason-block', 'return-de-block'].forEach(idb => { const el = document.getElementById(idb); if (el) el.style.display = idb === which ? 'block' : 'none'; }); }
+function showCoordReason() { crShowRouteBlock('coord-reason-block'); }
+function showTaReason() { crShowRouteBlock('ta-reason-block'); }
+function sendToCoordination(id) { if (uploadsBusy()) return; const c = getC(id); if (!c) return; saveReviewNotes(id); const ta = document.getElementById('coord-reason'); c.coordReason = ta ? ta.value.trim() : ''; advanceStage(id, 'Case Coordination', 'Placed on hold — sent to Case Coordination' + (c.coordReason ? ': ' + c.coordReason : ''), 'Case Review Team'); }
+function showReturnReason() { crShowRouteBlock('return-de-block'); }
 function sendBackToDataEntry(id) {
+  if (uploadsBusy()) return;
   const c = getC(id); if (!c) return; saveReviewNotes(id);
   const ta = document.getElementById('return-de-reason'); const reason = ta ? ta.value.trim() : '';
   const a = getA(id); a.returnedFromReview = true; a.returnReason = reason;
@@ -1314,7 +1334,9 @@ function crMissingPick(id) { pickFiles(async files => { await uploadCrFiles(id, 
 async function crMissingDrop(ev, id) { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.remove('drag-over'); const fl = ev.dataTransfer && ev.dataTransfer.files; if (fl && fl.length) await uploadCrFiles(id, 'missing_info', Array.from(fl)); }
 async function uploadCrFiles(id, key, files) {
   const c = getC(id); const r = getR(id); if (!r.aspFiles) r.aspFiles = {}; if (!r.aspFiles[key]) r.aspFiles[key] = [];
-  for (const f of files) { try { const meta = await Data.uploadFile(c, 'review', f, key); r.aspFiles[key].push({ name: meta.name, size: meta.size, path: meta.path }); } catch (e) { toast('Upload failed: ' + e.message); } }
+  uploadsInFlight++;
+  try { for (const f of files) { try { const meta = await Data.uploadFile(c, 'review', f, key); r.aspFiles[key].push({ name: meta.name, size: meta.size, path: meta.path }); } catch (e) { toast('Upload failed: ' + e.message); } } }
+  finally { uploadsInFlight--; }
   cfSave(c); if (selectedMode) renderMode(selectedMode); toast('File(s) attached');
 }
 function crMissingRemove(id, idx) { const r = getR(id); if (r.aspFiles && r.aspFiles.missing_info) { r.aspFiles.missing_info.splice(idx, 1); cfSave(getC(id)); if (selectedMode) renderMode(selectedMode); } }
@@ -1366,11 +1388,12 @@ function rowDelBtn(c, mode) {
   if (!isCfAdmin()) return '';
   return `<button class="cf-row-del" title="Delete case" aria-label="Delete case" onclick="event.stopPropagation();CF.adminDeleteCase('${mode}','${c.id}')"><i class="ti ti-trash"></i></button>`;
 }
-function crSendToDesign(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; r.designInbox = 'review_clarification'; c.stage = 'Design Check'; cfEvent(c, 'Returned to Design with new files/clarification' + (r.crClarification ? ': ' + r.crClarification : ''), 'Case Review Team'); cfSave(c); toast('Sent back to Design'); goBack('casereview'); }
-function crHoldMissing(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = 'hold_missing'; c.stage = 'Review'; cfEvent(c, 'Placed on hold for missing information', 'Case Review Team'); cfSave(c); toast('Placed on hold for missing information'); goBack('casereview'); }
+function crSendToDesign(id) { if (uploadsBusy()) return; const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; r.designInbox = 'review_clarification'; c.stage = 'Design Check'; cfEvent(c, 'Returned to Design with new files/clarification' + (r.crClarification ? ': ' + r.crClarification : ''), 'Case Review Team'); cfSave(c); toast('Sent back to Design'); goBack('casereview'); }
+function crHoldMissing(id) { if (uploadsBusy()) return; const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = 'hold_missing'; c.stage = 'Review'; cfEvent(c, 'Placed on hold for missing information', 'Case Review Team'); cfSave(c); toast('Placed on hold for missing information'); goBack('casereview'); }
 function showTaNotes() { const b = document.getElementById('ta-notes-block'); if (b) b.style.display = 'block'; }
-function crEscalateTa(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); const ta = document.getElementById('cr-ta-notes'); r.taNotes = ta ? ta.value.trim() : (r.taNotes || ''); r.crBucket = 'ta'; c.stage = 'Review'; cfEvent(c, 'Escalated to Technical Advisor' + (r.taNotes ? ': ' + r.taNotes : ''), 'Case Review Team'); cfSave(c); toast('Escalated to Technical Advisor'); goBack('casereview'); }
-function crPassToScanning(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; c.stage = 'Scanning'; cfEvent(c, 'Passed to Scanning team', 'Case Review Team'); cfSave(c); toast('Passed to Scanning'); goBack('casereview'); }
+function crEscalateTa(id) { if (uploadsBusy()) return; const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); const ta = document.getElementById('cr-ta-notes'); r.taNotes = ta ? ta.value.trim() : (r.taNotes || ''); r.crBucket = 'ta'; c.stage = 'Review'; cfEvent(c, 'Escalated to Technical Advisor' + (r.taNotes ? ': ' + r.taNotes : ''), 'Case Review Team'); cfSave(c); toast('Escalated to Technical Advisor'); goBack('casereview'); }
+function crPassToScanning(id) { if (uploadsBusy()) return; const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; c.stage = 'Scanning'; cfEvent(c, 'Passed to Scanning team', 'Case Review Team'); cfSave(c); toast('Passed to Scanning'); goBack('casereview'); }
+function crEscalateManager(id) { if (uploadsBusy()) return; const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = 'manager'; c.stage = 'Review'; cfEvent(c, 'Escalated to Manager', 'Case Review Team'); cfSave(c); toast('Escalated to Manager'); goBack('casereview'); }
 function fileExt(name) { const m = /\.([a-z0-9]+)$/i.exec(String(name || '')); return m ? m[1].toLowerCase() : ''; }
 // .stl -> 3Shape, .cad -> exocad: download with the real filename so the Windows
 // file-association opens it in the desktop CAD app. Everything else previews in a tab.
@@ -1460,8 +1483,25 @@ function submitQC() { const c = getC(selectedCaseId); if (!c) return; const note
 function toggleCheck(id, idx) { const c = getC(id); if (!c) return; if (!c.checklistDone) c.checklistDone = []; const i = c.checklistDone.indexOf(idx); if (i > -1) c.checklistDone.splice(i, 1); else c.checklistDone.push(idx); cfSave(c); if (selectedMode) renderMode(selectedMode); }
 function toggleDeRush(id) { const c = getC(id); if (!c) return; c.rush = !c.rush; const row = document.getElementById('de-rush-row'); const cb = document.getElementById('de-rush'); if (row) row.className = 'rush-row' + (c.rush ? ' rush-active' : ''); if (cb) cb.checked = c.rush; cfSave(c); }
 function saveDeFields(id) { const c = getC(id); if (!c) return; saveAoxText(id); const g = k => document.getElementById(k); const p = g('de-patient'); if (p) c.patient = p.value; const dr = g('de-doctor'); if (dr) c.doctor = dr.value; const dd = g('de-drdue'); if (dd) c.drDueDate = dd.value; const nt = g('de-notes'); if (nt) c.notes = nt.value; const cn = g('de-casenum'); if (cn) c.caseNum = cn.value; const sd = g('de-shipdate'); if (sd) c.shipDate = sd.value; }
-function submitDataEntry(id) { saveDeFields(id); const c = getC(id); if (c) { c.deHold = null; const a = getA(id); a.returnedFromReview = false; a.returnReason = ''; } advanceStage(id, 'Review', 'Data submitted and sent to review', 'Data Entry Team'); }
-function holdDataEntry(id, type) { saveDeFields(id); const c = getC(id); if (!c) return; c.deHold = type; const msg = type === 'models' ? 'Placed on hold — waiting for physical models' : 'Placed on hold — waiting for missing information'; cfEvent(c, msg, 'Data Entry Team'); cfSave(c); if (selectedMode) renderMode(selectedMode); toast(msg); }
+function submitDataEntry(id) {
+  saveDeFields(id);
+  const c = getC(id); if (!c) return;
+  const a = getA(id);
+  // Required before submitting to Review: case number, ship date, and a PAN selection
+  // (plus the pan number itself when "Pan Number" is chosen).
+  const missing = [];
+  if (!c.caseNum || !String(c.caseNum).trim()) missing.push('Case number');
+  if (!c.shipDate) missing.push('Ship date');
+  if (!a.panType) missing.push('a PAN selection');
+  else if (a.panType === 'number' && !(a.panNumber && String(a.panNumber).trim())) missing.push('Pan number');
+  if (missing.length) { toast('Please enter ' + missing.join(', ') + ' before submitting.'); return; }
+  c.deHold = null; a.returnedFromReview = false; a.returnReason = '';
+  c.stage = 'Review';
+  cfEvent(c, 'Data submitted and sent to review', 'Data Entry Team');
+  toast('Data submitted and sent to review');
+  goBack('dataentry'); // return to the main Data Entry dashboard
+}
+function holdDataEntry(id, type) { saveDeFields(id); const c = getC(id); if (!c) return; c.deHold = type; const msg = type === 'models' ? 'Placed on hold — waiting for physical models' : 'Placed on hold — waiting for missing information'; cfEvent(c, msg, 'Data Entry Team'); cfSave(c); toast(msg); goBack('dataentry'); }
 function saveOutsourceNotes(id) { const c = getC(id); if (!c) return; const el = document.getElementById('outsource-notes'); if (el) { c.outsourceNotes = el.value; cfSave(c); } }
 function beginQc(id) { saveOutsourceNotes(id); advanceStage(id, 'QC', 'Design received — ready for QC', 'Design Team'); }
 function markDesignReceived(id) { saveOutsourceNotes(id); advanceStage(id, 'QC', 'Design file received — ready for QC', 'Design Team'); }
@@ -1469,15 +1509,18 @@ function markDesignReceived(id) { saveOutsourceNotes(id); advanceStage(id, 'QC',
 // ── real file upload (replaces fakeUpload) ──────────────────────────
 function pickFiles(cb, accept) { const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; if (accept) inp.accept = accept; inp.style.display = 'none'; document.body.appendChild(inp); inp.onchange = () => { const files = Array.from(inp.files || []); document.body.removeChild(inp); if (files.length) cb(files); }; inp.click(); }
 async function uploadInto(c, kind, files) {
-  for (const f of files) {
-    try {
-      const meta = await Data.uploadFile(c, kind === 'review' ? 'review' : (kind === 'scan' ? 'scan' : (kind === 'design' ? 'design' : 'entry')), f);
-      if (kind === 'review') c.reviewFiles.push(meta);
-      else if (kind === 'scan') { if (!c.scanFiles) c.scanFiles = []; c.scanFiles.push(meta); }
-      else if (kind === 'design') c.designFile = meta;
-      else c.files.push(meta);
-    } catch (e) { toast('Upload failed: ' + e.message); }
-  }
+  uploadsInFlight++;
+  try {
+    for (const f of files) {
+      try {
+        const meta = await Data.uploadFile(c, kind === 'review' ? 'review' : (kind === 'scan' ? 'scan' : (kind === 'design' ? 'design' : 'entry')), f);
+        if (kind === 'review') c.reviewFiles.push(meta);
+        else if (kind === 'scan') { if (!c.scanFiles) c.scanFiles = []; c.scanFiles.push(meta); }
+        else if (kind === 'design') c.designFile = meta;
+        else c.files.push(meta);
+      } catch (e) { toast('Upload failed: ' + e.message); }
+    }
+  } finally { uploadsInFlight--; }
   cfSave(c); // file metadata lives in the case row (single-table) — persist it
   if (selectedMode) renderMode(selectedMode);
   toast('File(s) attached');
@@ -1557,13 +1600,13 @@ const CF = {
   // doctor reqs
   saveDesignReqs, addDesignReq, removeDesignReq, toggleReqsAck,
   // review transitions
-  passToDesign, passToScanning, showCoordReason, sendToCoordination, showReturnReason, sendBackToDataEntry,
+  passToDesign, passToScanning, showCoordReason, showTaReason, sendToCoordination, showReturnReason, sendBackToDataEntry,
   exportCaseReviewZip,
   // design → case review return + case review bucket actions
   showDesignReturn, sendBackToCaseReview, crMissingPick, crMissingDrop, crMissingRemove, saveCrFields, saveReviewInfo,
   // admin
   adminDeleteCase,
-  crSendToDesign, crHoldMissing, showTaNotes, crEscalateTa, crPassToScanning,
+  crSendToDesign, crHoldMissing, showTaNotes, crEscalateTa, crEscalateManager, crPassToScanning,
   // design routing (outsource partners / bar / vjig / milling)
   showDesignRouting, showOutsourcePartners, showRoutedOutsource, routeDesign, sendToOutsource, clearDesignRoute, exportDesignZip, setQcPartner,
   // complete tab filters
