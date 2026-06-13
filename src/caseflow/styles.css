@@ -224,6 +224,13 @@
 .cf-root .prog-connector { width:24px;height:1px;background:var(--color-border-tertiary);flex-shrink:0 }
 .cf-root .prog-connector.done { background:#1B8A3E }
 
+/* exocad viewer link prompt — shown above "Confirm QC Pass" when the case
+   required doctor design approval. Bright yellow so QC can't miss it. */
+.cf-root .exocad-link-box { margin-top:14px;padding:12px 14px;border-radius:var(--border-radius-md);background:#FFF275;border:1px solid #E6C200;box-shadow:0 0 0 3px rgba(255,224,0,0.25) }
+.cf-root .exocad-link-box label { display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:#6B5300;margin-bottom:8px }
+.cf-root .exocad-link-box input { width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #E6C200;border-radius:var(--border-radius-md);font-size:13px;background:#FFFEF2;color:var(--color-text-primary) }
+.cf-root .exocad-link-box input:focus { outline:none;border-color:#B59500;box-shadow:0 0 0 2px rgba(255,224,0,0.4) }
+
 /* misc */
 .cf-root .actions-bar { display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;align-items:center }
 .cf-root .two-col { display:grid;grid-template-columns:1fr 1fr;gap:16px }
@@ -259,6 +266,8 @@
 .cf-root .de-tabs { display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap }
 .cf-root .de-tab { padding:7px 12px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-secondary);font-size:12px;font-weight:500;color:var(--color-text-secondary);cursor:pointer }
 .cf-root .de-tab.active { border-color:#1882C7;background:#E9F5FD;color:#136AA3 }
+/* Long-labelled tab — wrap onto multiple lines so the button stays compact. */
+.cf-root .de-tab-wrap { white-space:normal;max-width:160px;line-height:1.25;text-align:left }
 .cf-root .de-tab-count { display:inline-block;margin-left:5px;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:8px;padding:0 6px;font-size:11px }
 
 /* detail header / breadcrumb */

@@ -63,7 +63,9 @@ function cfSave(c) {
 }
 function cfEvent(c, text, by) {
   if (!c.timeline) c.timeline = [];
-  c.timeline.push({ text, by: by || Data.currentUser(), at: new Date().toISOString() });
+  // operator = the signed-in user's display name (from their login email's account),
+  // recorded alongside the team so the activity log shows who performed the action.
+  c.timeline.push({ text, by: by || Data.currentUser(), operator: currentTechName(), at: new Date().toISOString() });
   cfSave(c); // events live in the case row (single-table) — persist with the case
 }
 
@@ -176,6 +178,13 @@ function renderQueue(mode) {
 const OUTSOURCE_PARTNERS = { adite: 'Adite', heygears: 'HeyGears', cadora: 'Cadora' };
 function designRouteOf(c) { return (c.aoxReview && c.aoxReview.designRoute) || null; }
 function partnerOf(c) { return (c.aoxReview && c.aoxReview.outsourcePartner) || null; }
+// True while a case is back in Design after Case Review returned it with new
+// files/clarification (set by crSendToDesign, cleared once Design routes it onward).
+function reviewClarificationOf(c) { return !!(c.aoxReview && c.aoxReview.designInbox === 'review_clarification'); }
+// Display labels for every in-lab design route (aoxReview.designRoute). Used by the
+// sub-tabs, the routed-case panel, and routeDesign()'s event/toast text.
+const DESIGN_ROUTE_LABELS = { bar: 'Bar Design', vjig: 'Design VJig/Custom Tray', milling: 'Milling', inhouse: 'In House Design', tri_predesign: 'TRI Full Arch Pre Design' };
+function designRouteLabel(route) { return DESIGN_ROUTE_LABELS[route] || 'Milling'; }
 
 // ── Design Team queue (sub-tabs by phase + design routes) ───────────
 // A routed case (Bar Design / VJig / Milling) stays at stage 'Design Check' and is
@@ -183,14 +192,17 @@ function partnerOf(c) { return (c.aoxReview && c.aoxReview.outsourcePartner) || 
 // grouped by aoxReview.outsourcePartner. Milling sits last (after Complete).
 let designTab = 'design';
 const DESIGN_SUBTABS = [
-  ['design', 'Design', c => c.stage === 'Design Check' && !designRouteOf(c)],
+  ['design', 'Design', c => c.stage === 'Design Check' && !designRouteOf(c) && !reviewClarificationOf(c)],
   ['bar', 'Bar Design', c => c.stage === 'Design Check' && designRouteOf(c) === 'bar'],
   ['vjig', 'Design VJig/Custom Tray', c => c.stage === 'Design Check' && designRouteOf(c) === 'vjig'],
+  ['inhouse', 'In House Design', c => c.stage === 'Design Check' && designRouteOf(c) === 'inhouse'],
+  ['tri_predesign', 'TRI Full Arch Pre Design', c => c.stage === 'Design Check' && designRouteOf(c) === 'tri_predesign'],
   ['outsource', 'Outsource', c => c.stage === 'Outsourcing'],
   ['qc', 'QC', c => c.stage === 'QC'],
   ['rework', 'Rework', c => c.stage === 'QC Failed - Rework' || c.stage === 'QC Failed - Resend'],
   ['complete', 'Complete', c => c.stage === 'Complete'],
   ['milling', 'Milling', c => c.stage === 'Design Check' && designRouteOf(c) === 'milling'],
+  ['review_clarification', 'Cases back from Case Review with Clarification', c => c.stage === 'Design Check' && !designRouteOf(c) && reviewClarificationOf(c)],
 ];
 function renderOutsourceGroups(list) {
   if (!list.length) return emptyMsg('No cases here');
@@ -204,9 +216,14 @@ function renderOutsourceGroups(list) {
   return html;
 }
 function renderDesignQueue() {
+  const todayPst = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
   const tabs = DESIGN_SUBTABS.map(([k, label, pred]) => {
-    const n = cases.filter(pred).length;
-    return `<button class="de-tab${designTab === k ? ' active' : ''}" onclick="CF.setDesignTab('${k}')">${label}<span class="de-tab-count">${n}</span></button>`;
+    // Complete tab shows only cases completed today (Pacific); others show the full count.
+    const n = k === 'complete'
+      ? cases.filter(c => pred(c) && completedPacificDate(c) === todayPst).length
+      : cases.filter(pred).length;
+    const wrap = k === 'review_clarification' ? ' de-tab-wrap' : '';
+    return `<button class="de-tab${wrap}${designTab === k ? ' active' : ''}" onclick="CF.setDesignTab('${k}')">${label}<span class="de-tab-count">${n}</span></button>`;
   }).join('');
   const active = DESIGN_SUBTABS.find(t => t[0] === designTab) || DESIGN_SUBTABS[0];
   const list = sortByShip(cases.filter(active[2]));
@@ -844,7 +861,7 @@ function barcodePanelHtml(c) {
 function renderCaseDetail(c) {
   const si = stageN(c.stage); const ps = ['Data Entry', 'Review', 'Design', 'Outsource', 'QC', 'Complete'];
   const prog = `<div class="progress-track" role="list">${ps.map((s, i) => `<div class="prog-step" role="listitem"><div class="prog-node"><div class="prog-circle${i < si ? ' done' : i === si ? ' active' : ''}">${i < si ? '<i class="ti ti-check" style="font-size:12px"></i>' : (i + 1)}</div><span class="prog-label${i === si ? ' active' : ''}">${s}</span></div>${i < ps.length - 1 ? `<div class="prog-connector${i < si ? ' done' : ''}"></div>` : ''}</div>`).join('')}${c.stage === 'Scanning' ? `<div style="margin-left:8px;padding:3px 10px;background:#F4F0E4;border-radius:10px;font-size:11px;color:#6B5E2F;font-weight:500;white-space:nowrap"><i class="ti ti-scan" style="font-size:11px;margin-right:4px"></i>Scanning</div>` : ''}</div>`;
-  const tl = `<div class="timeline">${(c.timeline.length ? c.timeline : ['No activity yet']).map((t, i, arr) => { const o = (t && typeof t === 'object') ? t : null; const text = o ? o.text : t; const sub = o ? `${o.by} • ${fmtTs(o.at)}` : (i === 0 ? c.updated : 'Recently'); return `<div class="tl-item"><div class="tl-dot${i === arr.length - 1 && c.stage !== 'Complete' ? ' active' : ' done'}"><i class="ti ti-${i === arr.length - 1 && c.stage !== 'Complete' ? 'clock' : 'check'}" style="font-size:12px"></i></div><div class="tl-line"></div><div class="tl-content"><div class="tl-title">${esc(text)}</div><div class="tl-sub">${esc(sub)}</div></div></div>`; }).join('')}</div>`;
+  const tl = `<div class="timeline">${(c.timeline.length ? c.timeline : ['No activity yet']).map((t, i, arr) => { const o = (t && typeof t === 'object') ? t : null; const text = o ? o.text : t; const sub = o ? `${o.by}${o.operator ? ' — ' + o.operator : ''} • ${fmtTs(o.at)}` : (i === 0 ? c.updated : 'Recently'); return `<div class="tl-item"><div class="tl-dot${i === arr.length - 1 && c.stage !== 'Complete' ? ' active' : ' done'}"><i class="ti ti-${i === arr.length - 1 && c.stage !== 'Complete' ? 'clock' : 'check'}" style="font-size:12px"></i></div><div class="tl-line"></div><div class="tl-content"><div class="tl-title">${esc(text)}</div><div class="tl-sub">${esc(sub)}</div></div></div>`; }).join('')}</div>`;
   // Open button is extension-aware: .stl -> 3Shape, .cad -> exocad (download so the
   // OS file-association launches the desktop app), everything else -> in-tab preview.
   const openBtn = (kind, i, f, key) => {
@@ -999,8 +1016,9 @@ function renderCaseDetail(c) {
   if (c.stage === 'Outsourcing') { const _partner = partnerOf(c); const _rel = r.qcReleaseAt; sp = `<div class="panel"><div class="panel-title"><i class="ti ti-send"></i> Outsourcer Management${_partner ? ` — ${OUTSOURCE_PARTNERS[_partner] || _partner}` : ''}</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Case ZIP sent${_partner ? ` to ${OUTSOURCE_PARTNERS[_partner] || _partner}` : ''}. ${_rel ? `Held here until <strong>${fmtTs(_rel)}</strong>, then auto-released to QC.` : 'Upload returned design when ready.'}</div><div class="form-group" style="margin-bottom:14px"><label>Upload design from outsourcer</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload returned design file</div></div>${c.designFile ? `<div class="file-list"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(c.designFile.name)}</span><span class="file-size">${c.designFile.size}</span></div></div>` : ''}</div><div class="form-group" style="margin-bottom:14px"><label>Outsource notes</label><textarea id="outsource-notes" placeholder="Outsourcer, ETA, issues, anything QC should know..." onchange="CF.saveOutsourceNotes('${c.id}')">${esc(c.outsourceNotes || '')}</textarea></div><div class="actions-bar">${c.designFile ? `<button class="btn btn-primary" onclick="CF.beginQc('${c.id}')"><i class="ti ti-eye-check"></i> Begin QC</button>` : `<button class="btn btn-primary" onclick="CF.markDesignReceived('${c.id}')"><i class="ti ti-eye-check"></i> Mark design file received</button>`}</div></div>`; }
   if (c.stage === 'QC') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-eye-check"></i> Quality Control</div><div class="alert alert-info"><i class="ti ti-info-circle"></i> Review the outsourcer's design.</div>${c.designFile ? `<div class="file-list" style="margin-bottom:14px"><div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(c.designFile.name)}</span><span class="file-size">${c.designFile.size}</span></div></div>` : ''}
     <label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:8px">QC decision</label><div class="qc-choice"><div class="qc-opt" id="qc-pass" onclick="CF.selectQC('pass')"><i class="ti ti-circle-check" style="color:#1B8A3E"></i><div class="opt-title">Pass QC</div></div><div class="qc-opt" id="qc-fail" onclick="CF.selectQC('fail')"><i class="ti ti-circle-x" style="color:#A0341A"></i><div class="opt-title">Fail QC</div></div></div>
-    <div id="fail-options" style="display:none;margin-top:12px"><label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:6px">Who will make adjustments?</label><div class="sub-choice"><div class="sub-opt" id="adj-self" onclick="CF.selectAdj('self')"><i class="ti ti-tool"></i><span>In-house</span></div><div class="sub-opt" id="adj-resend" onclick="CF.selectAdj('resend')"><i class="ti ti-refresh"></i><span>Resend</span></div></div></div>
+    <div id="fail-options" style="display:none;margin-top:12px"><label style="font-size:12px;color:var(--color-text-secondary);font-weight:500;display:block;margin-bottom:6px">Who will make adjustments?</label><div class="sub-choice"><div class="sub-opt" id="adj-self" onclick="CF.selectAdj('self')"><i class="ti ti-tool"></i><span>In-house</span></div><div class="sub-opt" id="adj-resend" onclick="CF.selectAdj('resend')"><i class="ti ti-refresh"></i><span>Resend</span></div><div class="sub-opt" id="adj-moreinfo" onclick="CF.selectAdj('moreinfo')"><i class="ti ti-help-circle"></i><span>More information needed</span></div></div></div>
     <div class="form-group" style="margin-top:12px"><label>QC notes</label><textarea id="qc-notes" placeholder="Describe issues or approvals..."></textarea></div>
+    <div id="qc-exocad-wrap"></div>
     <div class="actions-bar" id="qc-actions"></div></div>`; }
   if (c.stage === 'QC Failed - Rework') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-tool"></i> In-House Rework</div><div class="alert alert-warn"><i class="ti ti-alert-triangle"></i> QC failed — in-house adjustment in progress.</div><div class="form-group" style="margin-bottom:14px"><label>Upload revised design</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload corrected design</div></div></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Complete','In-house revision complete — case finalized','Design Team')"><i class="ti ti-check"></i> Mark Complete</button></div></div>`; }
   if (c.stage === 'QC Failed - Resend') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-refresh"></i> Resent to Outsourcer</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Redesign sent. Upload new design when received.</div><div class="form-group" style="margin-bottom:14px"><label>Upload revised design</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload new design file</div></div></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','QC','Revised design received — back to QC','Design Team')"><i class="ti ti-eye-check"></i> Begin QC Review</button></div></div>`; }
@@ -1016,7 +1034,11 @@ function renderCaseDetail(c) {
     // Case Review Selections + Doctor Requirements move to the LEFT column (next to
     // the Design Checklist) so the design team can reference them while filling it out.
     leftReviewSel = reviewSummaryPanel(c) + doctorReqsPanel(c);
-    sp = outsourceRO + qcRO + sp + designChecklistPanel(c) + designActions;
+    // Bar Design cases don't use the Design Checklist; neither does QC (filled out
+    // elsewhere). QC instead gets the editable Final Screws panel from Case Review.
+    const designCl = (designRouteOf(c) === 'bar' || c.stage === 'QC') ? '' : designChecklistPanel(c);
+    const qcScrews = c.stage === 'QC' ? qcScrewPanel(c) : '';
+    sp = outsourceRO + qcRO + qcScrews + sp + designCl + designActions;
   }
   const genInfo = `<div class="panel"><div class="panel-title"><i class="ti ti-info-circle"></i> Case Info</div>
       <div class="info-row">
@@ -1034,12 +1056,33 @@ function renderCaseDetail(c) {
     </div>`;
   return `${prog}<div class="two-col" style="gap:16px;align-items:start"><div>
     ${c.stage === 'Review' ? reviewInfoPanel : genInfo}
+    ${addonsSummaryPanel(c)}
     <div class="panel"><div class="panel-title"><i class="ti ti-clock"></i> Activity</div>${tl}</div>
     <div class="panel"><div class="panel-title"><i class="ti ti-file"></i> Entry files</div><div class="file-list">${fH}</div>${isDesign && caseReviewFilesHtml ? `<div class="sec-label" style="margin-top:12px">From Case Review (scans &amp; files)</div><div class="file-list">${caseReviewFilesHtml}</div>` : ''}</div>
     ${leftReviewSel}
     ${(!isDesign && c.reviewFiles.length) ? `<div class="panel"><div class="panel-title"><i class="ti ti-paperclip"></i> Design files</div><div class="file-list">${rfH}</div></div>` : ''}
     ${c.scanFiles && c.scanFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#6B5E2F"></i> Scan files</div><div class="file-list">${sfH}</div></div>` : ''}
   </div><div>${barcodePanelHtml(c)}${sp}</div></div>`;
+}
+// Add-ons summary — surfaces any add-on chosen during Data Entry (Denture,
+// Night Guard, Manufacturing Jig, LFX Model) on EVERY downstream stage, so
+// everyone after Data Entry knows the add-on was added. Reads case.aox (the
+// same object the Data Entry checklist writes). Renders nothing when no add-on
+// is selected. Gold left-accent so it stands out from the Case Info panel.
+function addonsSummaryPanel(c) {
+  const a = c.aox || {};
+  const items = [];
+  if (a.addonDenture) items.push(['Denture', a.addonDentureCase]);
+  if (a.addonNightguard) items.push(['Night Guard', a.addonNightguardCase]);
+  if (a.addonMfg && a.addonMfgSel === 0) items.push(['Manufacturing Jig', a.addonMfgJigCase]);
+  if (a.addonMfg && a.addonMfgSel === 1) items.push(['LFX Model', a.addonLfxCase]);
+  if (!items.length) return '';
+  const rows = items.map(([label, num]) =>
+    `<div class="info-pair"><span class="info-key">${label}</span><span class="info-val">${num ? '#' + esc(num) : 'Added'}</span></div>`
+  ).join('');
+  return `<div class="panel" style="border-left:3px solid var(--gold)"><div class="panel-title"><i class="ti ti-puzzle" style="color:var(--gold)"></i> Add-ons</div>
+      <div class="info-row">${rows}</div>
+    </div>`;
 }
 function afterDetailRender(c) {
   qcSel = null; adjSel = null;
@@ -1095,6 +1138,14 @@ function caseReviewChecklistText(c) {
   } else {
     L.push('(No account type selected — no review selections to export.)');
   }
+  // Add-ons selected during Data Entry — listed so the design team sees them too.
+  const a = c.aox || {};
+  const addons = [];
+  if (a.addonDenture) addons.push('Denture' + (a.addonDentureCase ? ' (#' + a.addonDentureCase + ')' : ''));
+  if (a.addonNightguard) addons.push('Night Guard' + (a.addonNightguardCase ? ' (#' + a.addonNightguardCase + ')' : ''));
+  if (a.addonMfg && a.addonMfgSel === 0) addons.push('Manufacturing Jig' + (a.addonMfgJigCase ? ' (#' + a.addonMfgJigCase + ')' : ''));
+  if (a.addonMfg && a.addonMfgSel === 1) addons.push('LFX Model' + (a.addonLfxCase ? ' (#' + a.addonLfxCase + ')' : ''));
+  if (addons.length) { L.push('', 'ADD-ONS'); addons.forEach(x => L.push('  ' + x)); }
   return L.join('\n') + '\n';
 }
 // Build the Case Review folder entries: scans/<review scan files>, Case Review
@@ -1102,14 +1153,15 @@ function caseReviewChecklistText(c) {
 // Review export and the Design export (which adds design-specific artifacts).
 async function buildCaseReviewEntries(c, folder, opts) {
   const includeDataEntryFiles = !opts || opts.includeDataEntryFiles !== false;
+  const includeChecklist = !opts || opts.includeChecklist !== false;
   const r = getR(c.id);
   const zipSafe = s => String(s || 'file').replace(/[\\/]/g, '_');
   const entries = [];
   const addFile = async (name, path) => { if (!path) return; try { const url = await Data.fileUrl(path); entries.push({ name, url }); } catch (e) { entries.push({ name, url: null }); } };
   // scans/ — every Case Review scan/file upload except the design-return "missing info" box
   if (r.aspFiles) { for (const key of Object.keys(r.aspFiles)) { if (key === 'missing_info') continue; for (const f of (r.aspFiles[key] || [])) await addFile(`${folder}/scans/${zipSafe(f.name)}`, f.path); } }
-  // Case Review Checklist (everything after the Rx & Work Ticket Review)
-  entries.push({ name: `${folder}/Case Review Checklist.txt`, text: caseReviewChecklistText(c) });
+  // Case Review Checklist (everything after the Rx & Work Ticket Review) — omitted from the Design export
+  if (includeChecklist) entries.push({ name: `${folder}/Case Review Checklist.txt`, text: caseReviewChecklistText(c) });
   // design notes.txt — numbered doctor requirement notes
   const reqs = (c.designReqs || []).filter(x => x && x.trim());
   entries.push({ name: `${folder}/design notes.txt`, text: (reqs.length ? reqs.map((q, i) => `${i + 1}. ${q.trim()}`).join('\n') : '(no doctor requirement notes)') + '\n' });
@@ -1131,7 +1183,7 @@ async function exportDesignZip(id) {
   const c = getC(id); if (!c) return;
   saveDclTexts(id); // capture design checklist edits before exporting
   const folder = caseFolderName(c);
-  const entries = await buildCaseReviewEntries(c, folder, { includeDataEntryFiles: false });
+  const entries = await buildCaseReviewEntries(c, folder, { includeDataEntryFiles: false, includeChecklist: false });
   try { const pdf = await fillDesignPdf(c); if (pdf) entries.push({ name: `${folder}/design_checklist_${c.dclType || 'NA'}_${folder}.pdf`, bytes: pdf }); } catch (e) {}
   toast('Preparing ' + folder + '.zip…');
   await buildAndDownloadZip(folder + '.zip', entries, toast);
@@ -1154,10 +1206,19 @@ function sendBackToDataEntry(id) {
 function designActionsPanel(c) {
   const route = designRouteOf(c);
   if (route) {
-    const label = route === 'bar' ? 'Bar Design' : (route === 'vjig' ? 'Design VJig/Custom Tray' : 'Milling');
+    const label = designRouteLabel(route);
+    // Bar Design can be sent straight on to Milling without returning to the queue first.
+    const toMilling = route === 'bar' ? `<button class="btn" onclick="CF.routeDesign('${c.id}','milling')"><i class="ti ti-tools"></i> Send to Milling</button>` : '';
+    // TRI Full Arch Pre Design can be handed off to an outsource partner. Selecting a
+    // partner moves the case to the Outsource tab and returns here to this dashboard.
+    const toOutsource = route === 'tri_predesign' ? `<button class="btn" onclick="CF.showRoutedOutsource()"><i class="ti ti-external-link"></i> Send to Outsource</button>` : '';
+    const outsourceBlock = route === 'tri_predesign' ? `<div id="routed-outsource-partners" style="display:none;margin-top:12px">
+      <span class="sec-label" style="margin-top:0">Choose outsource partner</span>
+      <div class="actions-bar">${Object.keys(OUTSOURCE_PARTNERS).map(k => `<button class="btn" onclick="CF.sendToOutsource('${c.id}','${k}','tri_predesign')">Send to ${OUTSOURCE_PARTNERS[k]}</button>`).join('')}</div>
+    </div>` : '';
     return `<div class="panel"><div class="panel-title"><i class="ti ti-route"></i> ${label}</div>
       <div class="alert alert-info" style="margin:0 0 10px"><i class="ti ti-info-circle"></i> This case has been sent to <strong>${label}</strong>.</div>
-      <div class="actions-bar"><button class="btn btn-sm" onclick="CF.exportDesignZip('${c.id}')"><i class="ti ti-download"></i> Export Case ZIP</button><button class="btn" onclick="CF.clearDesignRoute('${c.id}')"><i class="ti ti-arrow-back-up"></i> Return to Design queue</button></div></div>`;
+      <div class="actions-bar"><button class="btn btn-sm" onclick="CF.exportDesignZip('${c.id}')"><i class="ti ti-download"></i> Export Case ZIP</button>${toMilling}${toOutsource}<button class="btn" onclick="CF.clearDesignRoute('${c.id}')"><i class="ti ti-arrow-back-up"></i> Return to Design queue</button></div>${outsourceBlock}</div>`;
   }
   return `<div class="panel"><div class="panel-title"><i class="ti ti-send"></i> Design Actions</div>
     <div class="actions-bar">
@@ -1174,6 +1235,8 @@ function designActionsPanel(c) {
         <button class="btn btn-primary" onclick="CF.showOutsourcePartners()"><i class="ti ti-external-link"></i> Send to Outsource</button>
         <button class="btn" onclick="CF.routeDesign('${c.id}','bar')"><i class="ti ti-rectangle"></i> Send to Bar Design</button>
         <button class="btn" onclick="CF.routeDesign('${c.id}','vjig')"><i class="ti ti-dental"></i> Send to Design Verification Jig/Custom Tray</button>
+        <button class="btn" onclick="CF.routeDesign('${c.id}','inhouse')"><i class="ti ti-home"></i> Send to In House Design</button>
+        <button class="btn" onclick="CF.routeDesign('${c.id}','tri_predesign')"><i class="ti ti-dental"></i> Send to TRI Full Arch Pre Design</button>
         <button class="btn" onclick="CF.routeDesign('${c.id}','milling')"><i class="ti ti-tools"></i> Send to Milling</button>
       </div>
       <div id="outsource-partners" style="display:none;margin-top:10px">
@@ -1189,11 +1252,14 @@ function designActionsPanel(c) {
 function showDesignReturn() { const b = document.getElementById('design-return-block'); if (b) b.style.display = 'block'; }
 function showDesignRouting() { const b = document.getElementById('design-routing-block'); if (b) b.style.display = 'block'; }
 function showOutsourcePartners() { const b = document.getElementById('outsource-partners'); if (b) b.style.display = 'block'; }
+function showRoutedOutsource() { const b = document.getElementById('routed-outsource-partners'); if (b) b.style.display = 'block'; }
 function routeDesign(id, route) {
   const c = getC(id); if (!c) return;
-  const r = getR(id); r.designRoute = route; r.outsourcePartner = null;
-  const label = route === 'bar' ? 'Bar Design' : (route === 'vjig' ? 'Design VJig/Custom Tray' : 'Milling');
+  const r = getR(id); r.designRoute = route; r.outsourcePartner = null; r.designInbox = null;
+  const label = designRouteLabel(route);
   cfEvent(c, 'Routed to ' + label, 'Design Team'); cfSave(c); // stage stays 'Design Check'
+  // After routing a case to its area, drop the user back on the main Design dashboard.
+  designTab = 'design';
   toast('Sent to ' + label); goBack('design');
 }
 // Outsourced cases are held in the Outsource tab until 4:00am the following day,
@@ -1215,13 +1281,16 @@ function releaseOutsourcedToQc() {
   if (moved && selectedMode === 'design' && !selectedCaseId) renderMode('design');
   return moved;
 }
-function sendToOutsource(id, partner) {
+function sendToOutsource(id, partner, returnTab) {
   const c = getC(id); if (!c) return;
-  const r = getR(id); r.outsourcePartner = partner; r.designRoute = null;
+  const r = getR(id); r.outsourcePartner = partner; r.designRoute = null; r.designInbox = null;
   r.outsourcedAt = new Date().toISOString();
   r.qcReleaseAt = nextQcReleaseISO(r.outsourcedAt);
   c.stage = 'Outsourcing';
   cfEvent(c, 'Sent to outsource partner: ' + (OUTSOURCE_PARTNERS[partner] || partner) + ' — holds until ' + fmtTs(r.qcReleaseAt), 'Design Team'); cfSave(c);
+  // Return to the originating queue tab (e.g. TRI Full Arch Pre Design) when specified;
+  // otherwise leave the current tab as-is.
+  if (returnTab) designTab = returnTab;
   toast('Sent to ' + (OUTSOURCE_PARTNERS[partner] || partner)); goBack('design');
 }
 function clearDesignRoute(id) {
@@ -1297,7 +1366,7 @@ function rowDelBtn(c, mode) {
   if (!isCfAdmin()) return '';
   return `<button class="cf-row-del" title="Delete case" aria-label="Delete case" onclick="event.stopPropagation();CF.adminDeleteCase('${mode}','${c.id}')"><i class="ti ti-trash"></i></button>`;
 }
-function crSendToDesign(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; c.stage = 'Design Check'; cfEvent(c, 'Returned to Design with new files/clarification' + (r.crClarification ? ': ' + r.crClarification : ''), 'Case Review Team'); cfSave(c); toast('Sent back to Design'); goBack('casereview'); }
+function crSendToDesign(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = null; r.designInbox = 'review_clarification'; c.stage = 'Design Check'; cfEvent(c, 'Returned to Design with new files/clarification' + (r.crClarification ? ': ' + r.crClarification : ''), 'Case Review Team'); cfSave(c); toast('Sent back to Design'); goBack('casereview'); }
 function crHoldMissing(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); r.crBucket = 'hold_missing'; c.stage = 'Review'; cfEvent(c, 'Placed on hold for missing information', 'Case Review Team'); cfSave(c); toast('Placed on hold for missing information'); goBack('casereview'); }
 function showTaNotes() { const b = document.getElementById('ta-notes-block'); if (b) b.style.display = 'block'; }
 function crEscalateTa(id) { const c = getC(id); if (!c) return; saveCrFields(id); const r = getR(id); const ta = document.getElementById('cr-ta-notes'); r.taNotes = ta ? ta.value.trim() : (r.taNotes || ''); r.crBucket = 'ta'; c.stage = 'Review'; cfEvent(c, 'Escalated to Technical Advisor' + (r.taNotes ? ': ' + r.taNotes : ''), 'Case Review Team'); cfSave(c); toast('Escalated to Technical Advisor'); goBack('casereview'); }
@@ -1327,8 +1396,66 @@ async function previewFile(id, kind, idx, key) {
   try { const url = await Data.fileUrl(f.path); if (url) openByType(f.name, url); }
   catch (e) { toast('Open failed: ' + e.message); }
 }
-function selectQC(val) { qcSel = val; document.getElementById('qc-pass').className = 'qc-opt' + (val === 'pass' ? ' selected' : ''); document.getElementById('qc-fail').className = 'qc-opt' + (val === 'fail' ? ' selected-red' : ''); document.getElementById('fail-options').style.display = val === 'fail' ? 'block' : 'none'; if (val === 'pass') { adjSel = null; document.getElementById('qc-actions').innerHTML = `<button class="btn btn-primary" onclick="CF.submitQC()"><i class="ti ti-check"></i> Confirm QC Pass — Mark Complete</button>`; } else document.getElementById('qc-actions').innerHTML = ''; }
-function selectAdj(val) { adjSel = val; document.getElementById('adj-self').className = 'sub-opt' + (val === 'self' ? ' selected' : ''); document.getElementById('adj-resend').className = 'sub-opt' + (val === 'resend' ? ' selected' : ''); document.getElementById('qc-actions').innerHTML = `<button class="btn btn-primary btn-danger" onclick="CF.submitQC()"><i class="ti ti-x"></i> ${val === 'self' ? 'Assign In-House Rework' : 'Resend to Outsourcer'}</button>`; }
+function selectQC(val) { qcSel = val; document.getElementById('qc-pass').className = 'qc-opt' + (val === 'pass' ? ' selected' : ''); document.getElementById('qc-fail').className = 'qc-opt' + (val === 'fail' ? ' selected-red' : ''); document.getElementById('fail-options').style.display = val === 'fail' ? 'block' : 'none'; const exoWrap = document.getElementById('qc-exocad-wrap'); if (val === 'pass') { adjSel = null; const r = getR(selectedCaseId); if (exoWrap) exoWrap.innerHTML = `<div class="exocad-link-box"><label><i class="ti ti-link"></i> Please enter exocad viewer link here</label><input type="text" id="qc-exocad-link" placeholder="Please enter exocad viewer link here" value="${dclAttr(r.exocadViewerLink || '')}" oninput="CF.setExocadLink('${selectedCaseId}', this.value)"></div>`; document.getElementById('qc-actions').innerHTML = `<button class="btn btn-primary" onclick="CF.submitQC()"><i class="ti ti-check"></i> Confirm QC Pass — Mark Complete</button>`; } else { if (exoWrap) exoWrap.innerHTML = ''; document.getElementById('qc-actions').innerHTML = ''; } }
+function setExocadLink(id, val) { const r = getR(id); r.exocadViewerLink = val; }
+// QC stage Final Screws — shows the screw selection Case Review captured and lets
+// the QC team change it. Aspen non-LFX cases use the ASP_SCREW_OPTS radio list;
+// TRI/Legacy cases use a 3-box free-text entry (name / type / location). Edits save
+// to aoxReview so they stay in sync with the case.
+function qcScrewPanel(c) {
+  const r = getR(c.id);
+  const spec = r.aspSpec || {};
+  const isAspen = r.acctType === 'asp' && spec.lfx === 'no';
+  const isTri = r.acctType === 'tri';
+  if (!isAspen && !isTri) return '';
+  const intro = `<div class="panel" id="qc-screw-panel"><div class="panel-title"><i class="ti ti-tool" style="color:#8E6510"></i> Final Screws</div>
+    <div class="alert alert-info" style="margin:0 0 10px"><i class="ti ti-info-circle"></i> Selected by Case Review — edit if the screw selection needs to change.</div>
+    <div class="form-group" style="margin-bottom:12px"><label>Total number of screws</label><input type="text" id="qc-screw-count" value="${dclAttr(r.aspScrewCount || '')}" placeholder="e.g. 6" onchange="CF.setQcScrewCount('${c.id}',this.value)"></div>
+    <span class="sec-label" style="margin-top:0">Screw type</span>`;
+  let typeBlock;
+  if (isTri) {
+    // TRI/Legacy: free-text screw entry — name, type (e.g. 2.8L), and location.
+    typeBlock = `<div class="form-row-3" style="margin-top:6px">
+      <div class="form-group"><label>Screw name</label><input type="text" value="${dclAttr(r.triScrewName || '')}" placeholder="Screw name" onchange="CF.setQcTriScrew('${c.id}','triScrewName',this.value)"></div>
+      <div class="form-group"><label>Screw type</label><input type="text" value="${dclAttr(r.triScrewType || '')}" placeholder="e.g. 2.8L" onchange="CF.setQcTriScrew('${c.id}','triScrewType',this.value)"></div>
+      <div class="form-group"><label>Location</label><input type="text" value="${dclAttr(r.triScrewLoc || '')}" placeholder="Location" onchange="CF.setQcTriScrew('${c.id}','triScrewLoc',this.value)"></div>
+    </div>`;
+  } else {
+    const screwIdxs = spec.ccDigital === 'yes' ? [6, 7] : ASP_SCREW_OPTS.map((_, i) => i);
+    typeBlock = screwIdxs.map(i => `<div class="opt-row${r.aspScrewType === i ? ' sel' : ''}" onclick="CF.setQcScrewType('${c.id}',${i})"><input type="radio" ${r.aspScrewType === i ? 'checked' : ''}><span class="opt-row-label">${ASP_SCREW_OPTS[i]}</span></div>`).join('');
+  }
+  return intro + typeBlock + `</div>`;
+}
+function rebuildQcScrews(id) { const old = document.getElementById('qc-screw-panel'); if (!old) return; const tmp = document.createElement('div'); tmp.innerHTML = qcScrewPanel(getC(id)); if (tmp.firstElementChild) old.parentNode.replaceChild(tmp.firstElementChild, old); }
+function setQcScrewType(id, idx) { const r = getR(id); r.aspScrewType = r.aspScrewType === idx ? null : idx; cfSave(getC(id)); rebuildQcScrews(id); }
+function setQcScrewCount(id, val) { getR(id).aspScrewCount = val; cfSave(getC(id)); }
+function setQcTriScrew(id, field, val) { getR(id)[field] = val; cfSave(getC(id)); }
+function selectAdj(val) {
+  adjSel = val;
+  document.getElementById('adj-self').className = 'sub-opt' + (val === 'self' ? ' selected' : '');
+  document.getElementById('adj-resend').className = 'sub-opt' + (val === 'resend' ? ' selected' : '');
+  const mi = document.getElementById('adj-moreinfo'); if (mi) mi.className = 'sub-opt' + (val === 'moreinfo' ? ' selected' : '');
+  const acts = document.getElementById('qc-actions');
+  if (val === 'moreinfo') {
+    // Route back to Case Review's "Cases sent back from Design" tab for clarification.
+    acts.innerHTML = `<button class="btn btn-primary" onclick="CF.qcSendBackToCaseReview('${selectedCaseId}')"><i class="ti ti-arrow-back-up"></i> Send back to Case Review</button>`;
+  } else {
+    acts.innerHTML = `<button class="btn btn-primary btn-danger" onclick="CF.submitQC()"><i class="ti ti-x"></i> ${val === 'self' ? 'Assign In-House Rework' : 'Resend to Outsourcer'}</button>`;
+  }
+}
+// QC "More information needed" → send the case to Case Review's "Cases sent back
+// from Design" tab (crBucket 'design_return'), using the QC notes as the reason.
+function qcSendBackToCaseReview(id) {
+  const c = getC(id); if (!c) return;
+  const notesEl = document.getElementById('qc-notes'); const reason = notesEl ? notesEl.value.trim() : '';
+  if (notesEl) c.qcNotes = notesEl.value;
+  const r = getR(id); r.crBucket = 'design_return'; r.designReturnReason = reason;
+  c.stage = 'Review';
+  cfEvent(c, 'Sent back to Case Review from QC — more information needed' + (reason ? ': ' + reason : ''), 'Design Team (QC)');
+  cfSave(c);
+  toast('Sent back to Case Review');
+  goBack('design');
+}
 function submitQC() { const c = getC(selectedCaseId); if (!c) return; const notesEl = document.getElementById('qc-notes'); if (notesEl) c.qcNotes = notesEl.value; if (qcSel === 'pass') advanceStage(c.id, 'Complete', 'QC passed — case complete', 'Design Team (QC)'); else if (adjSel === 'self') advanceStage(c.id, 'QC Failed - Rework', 'QC failed — in-house rework assigned', 'Design Team (QC)'); else if (adjSel === 'resend') advanceStage(c.id, 'QC Failed - Resend', 'QC failed — resent to outsourcer', 'Design Team (QC)'); }
 function toggleCheck(id, idx) { const c = getC(id); if (!c) return; if (!c.checklistDone) c.checklistDone = []; const i = c.checklistDone.indexOf(idx); if (i > -1) c.checklistDone.splice(i, 1); else c.checklistDone.push(idx); cfSave(c); if (selectedMode) renderMode(selectedMode); }
 function toggleDeRush(id) { const c = getC(id); if (!c) return; c.rush = !c.rush; const row = document.getElementById('de-rush-row'); const cb = document.getElementById('de-rush'); if (row) row.className = 'rush-row' + (c.rush ? ' rush-active' : ''); if (cb) cb.checked = c.rush; cfSave(c); }
@@ -1380,7 +1507,7 @@ async function createCase() {
     c = await Data.insertCase({ case_id: caseId, patient, doctor, rush, dr_due_date: drDueDate || null, notes, stage: 'Data Entry' });
   } catch (e) { toast('Create failed: ' + e.message); return; }
   cases.unshift(c);
-  c.timeline.push({ text: 'Case created', by: 'Data Entry Team', at: new Date().toISOString() });
+  c.timeline.push({ text: 'Case created', by: 'Data Entry Team', operator: currentTechName(), at: new Date().toISOString() });
   Data.saveCase(c).catch(() => {});
   closeModal(); rushState = false;
   ['cf-nc-patient', 'cf-nc-doctor', 'cf-nc-notes', 'cf-nc-drdue'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -1438,7 +1565,7 @@ const CF = {
   adminDeleteCase,
   crSendToDesign, crHoldMissing, showTaNotes, crEscalateTa, crPassToScanning,
   // design routing (outsource partners / bar / vjig / milling)
-  showDesignRouting, showOutsourcePartners, routeDesign, sendToOutsource, clearDesignRoute, exportDesignZip, setQcPartner,
+  showDesignRouting, showOutsourcePartners, showRoutedOutsource, routeDesign, sendToOutsource, clearDesignRoute, exportDesignZip, setQcPartner,
   // complete tab filters
   setCompletePartner, setCompleteFrom, setCompleteTo, clearCompleteFilters,
   // file preview (signed URL)
@@ -1446,7 +1573,7 @@ const CF = {
   // design checklist
   setDclType, toggleDcl, setDclVal, setDclText,
   // QC + design
-  selectQC, selectAdj, submitQC, toggleCheck, markDesignReceived,
+  selectQC, selectAdj, submitQC, qcSendBackToCaseReview, setExocadLink, setQcScrewType, setQcScrewCount, setQcTriScrew, toggleCheck, markDesignReceived,
   exportZip: (id) => { const c = getC(id); if (c) exportZip(c, toast); },
   // data entry
   toggleDeRush, submitDataEntry, holdDataEntry, pick, dropFiles,
