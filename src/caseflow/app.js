@@ -780,7 +780,7 @@ function reviewSummaryPanel(c) {
   const r = getR(c.id);
   if (!r || !r.acctType) return '';
   const acct = r.acctType;
-  const pair = (k, v) => `<div class="info-pair"><span class="info-key">${k}</span><span class="info-val">${v}</span></div>`;
+  const pair = (k, v) => `<div class="info-pair"><span class="info-key">${k}</span><span class="info-val" style="font-weight:700">${v}</span></div>`;
   const sect = (t, inner) => inner ? `<span class="sec-label">${t}</span><div class="info-row" style="margin-bottom:6px">${inner}</div>` : '';
   const yn = v => v === 'yes' ? `<span style="color:#157031;font-weight:600">Yes</span>` : (v === 'no' ? `<span style="color:#A0341A;font-weight:600">No</span>` : '—');
   const pf = v => v === 'pass' ? `<span style="color:#157031;font-weight:600">Pass</span>` : (v === 'fail' ? `<span style="color:#A0341A;font-weight:600">Fail</span>` : '—');
@@ -1036,7 +1036,9 @@ function renderCaseDetail(c) {
     <div id="qc-exocad-wrap"></div>
     <div class="actions-bar" id="qc-actions"></div></div>`; }
   if (c.stage === 'QC Failed - Rework') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-tool"></i> In-House Rework</div><div class="alert alert-warn"><i class="ti ti-alert-triangle"></i> QC failed — in-house adjustment in progress.</div><div class="form-group" style="margin-bottom:14px"><label>Upload revised design</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload corrected design</div></div></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Complete','In-house revision complete — case finalized','Design Team')"><i class="ti ti-check"></i> Mark Complete</button></div></div>`; }
-  if (c.stage === 'QC Failed - Resend') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-refresh"></i> Resent to Outsourcer</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Redesign sent. Upload new design when received.</div><div class="form-group" style="margin-bottom:14px"><label>Upload revised design</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload new design file</div></div></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','QC','Revised design received — back to QC','Design Team')"><i class="ti ti-eye-check"></i> Begin QC Review</button></div></div>`; }
+  if (c.stage === 'QC Failed - Resend') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-refresh"></i> Resent to Outsourcer</div><div class="alert alert-warn"><i class="ti ti-clock"></i> Redesign sent. Upload new design when received.</div><div class="form-group" style="margin-bottom:14px"><label>Upload revised design</label><div class="upload-zone" onclick="CF.pick('design')"><div class="upload-icon"><i class="ti ti-upload"></i></div><div class="upload-text">Upload new design file</div></div></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','QC','Revised design received — back to QC','Design Team')"><i class="ti ti-eye-check"></i> Begin QC Review</button><button class="btn" onclick="CF.showReworkTaReason()"><i class="ti ti-user-up"></i> Escalate to TA</button><button class="btn" onclick="CF.showReworkReturnReason()"><i class="ti ti-arrow-back-up"></i> Send to Case Review for clarification/missing information</button></div>
+    <div id="rework-ta-block" style="display:none;margin-top:12px"><div class="form-group"><label>Reason for sending to Technical Advisor</label><textarea id="rework-ta-reason" placeholder="Enter reason for sending to the Technical Advisor...">${esc(r.taNotes || '')}</textarea></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.designEscalateTa('${c.id}')"><i class="ti ti-send"></i> Confirm — Escalate to TA</button></div></div>
+    <div id="rework-return-block" style="display:none;margin-top:12px"><div class="form-group"><label>Reason for sending to Case Review</label><textarea id="design-return-reason" placeholder="Describe the clarification or missing information needed...">${esc(r.designReturnReason || '')}</textarea></div><div class="actions-bar"><button class="btn btn-primary" onclick="CF.sendBackToCaseReview('${c.id}')"><i class="ti ti-send"></i> Confirm — Send to Case Review</button></div></div></div>`; }
   if (c.stage === 'Complete') { sp = `<div class="panel"><div class="alert alert-success"><i class="ti ti-circle-check"></i> This case has been completed and approved.</div><div class="actions-bar"><button class="btn" onclick="CF.exportZip('${c.id}')"><i class="ti ti-download"></i> Download Final ZIP</button></div></div>`; }
   if (c.stage === 'Case Coordination') { sp = `<div class="panel"><div class="panel-title"><i class="ti ti-player-pause" style="color:#8E6510"></i> On Hold — Case Coordination</div><div class="alert alert-warn"><i class="ti ti-clock"></i> This case is on hold and has been sent to Case Coordination.</div>${c.coordReason ? `<div class="info-pair" style="border:none;padding-top:0"><span class="info-key">Reason</span><span class="info-val">${esc(c.coordReason)}</span></div>` : ''}<div class="actions-bar"><button class="btn btn-primary" onclick="CF.advanceStage('${c.id}','Review','Returned from Case Coordination — back to review','Case Coordination')"><i class="ti ti-arrow-back-up"></i> Return to Review</button></div></div>`; }
 
@@ -1064,6 +1066,7 @@ function renderCaseDetail(c) {
         <div class="info-pair"><span class="info-key">Ship date</span><span class="info-val">${c.shipDate || '—'}</span></div>
         <div class="info-pair"><span class="info-key">Dr due date</span><span class="info-val">${c.drDueDate || '—'}</span></div>
         <div class="info-pair"><span class="info-key">Stage</span><span class="info-val">${badge(c.stage)}</span></div>
+        ${r.rxNotes && c.stage !== 'QC' ? `<div class="info-pair"><span class="info-key">Rx &amp; Work Ticket Notes</span><span class="info-val" style="font-size:12px">${esc(r.rxNotes)}</span></div>` : ''}
         ${c.designNotes ? `<div class="info-pair"><span class="info-key">Doctor requirements</span><span class="info-val" style="font-size:12px">${esc(c.designNotes)}</span></div>` : ''}
         ${r.designNeeds !== null && r.designNeeds !== undefined ? `<div class="info-pair"><span class="info-key">Design needs</span><span class="info-val">${DESIGN_NEEDS_OPTS[r.designNeeds] || ''}</span></div>` : ''}
         ${r.drApproval ? `<div class="info-pair"><span class="info-key">Dr approval</span><span class="info-val">${r.drApproval === 'yes' ? 'Yes — Required' : 'No — Not Required'}</span></div>` : ''}
@@ -1077,7 +1080,7 @@ function renderCaseDetail(c) {
     ${leftReviewSel}
     ${(!isDesign && c.reviewFiles.length) ? `<div class="panel"><div class="panel-title"><i class="ti ti-paperclip"></i> Design files</div><div class="file-list">${rfH}</div></div>` : ''}
     ${c.scanFiles && c.scanFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#6B5E2F"></i> Scan files</div><div class="file-list">${sfH}</div></div>` : ''}
-  </div><div>${barcodePanelHtml(c)}${sp}</div></div>`;
+  </div><div>${barcodePanelHtml(c)}${c.stage === 'QC' && r.rxNotes ? `<div class="panel"><div class="panel-title"><i class="ti ti-file-description"></i> Rx &amp; Work Ticket Notes</div><div style="font-size:13px;white-space:pre-wrap;font-weight:700">${esc(r.rxNotes)}</div></div>` : ''}${sp}</div></div>`;
 }
 // Add-ons summary — surfaces any add-on chosen during Data Entry (Denture,
 // Night Guard, Manufacturing Jig, LFX Model) on EVERY downstream stage, so
@@ -1328,6 +1331,20 @@ function sendBackToCaseReview(id) {
   toast('Sent back to Case Review');
   goBack('design');
 }
+// From the Design Rework tab: escalate the case to the Case Review Technical Advisor
+// tab (crBucket 'ta'), then return to the Design queue.
+function designEscalateTa(id) {
+  const c = getC(id); if (!c) return;
+  const ta = document.getElementById('rework-ta-reason'); const reason = ta ? ta.value.trim() : '';
+  const r = getR(id); r.crBucket = 'ta'; c.stage = 'Review'; if (reason) r.taNotes = reason;
+  cfEvent(c, 'Escalated to Technical Advisor from Design' + (reason ? ': ' + reason : ''), 'Design Team');
+  cfSave(c);
+  toast('Escalated to Technical Advisor');
+  goBack('design');
+}
+// Rework-tab reason reveals — mutually exclusive (only one route reason box at a time).
+function showReworkTaReason() { ['rework-ta-block', 'rework-return-block'].forEach(idb => { const el = document.getElementById(idb); if (el) el.style.display = idb === 'rework-ta-block' ? 'block' : 'none'; }); }
+function showReworkReturnReason() { ['rework-ta-block', 'rework-return-block'].forEach(idb => { const el = document.getElementById(idb); if (el) el.style.display = idb === 'rework-return-block' ? 'block' : 'none'; }); }
 // Missing-info uploads use a dedicated path (the editable review checklist isn't on
 // screen in this view, so rebuildAoxReview would no-op — persist + re-render here).
 function crMissingPick(id) { pickFiles(async files => { await uploadCrFiles(id, 'missing_info', files); }); }
@@ -1603,7 +1620,7 @@ const CF = {
   passToDesign, passToScanning, showCoordReason, showTaReason, sendToCoordination, showReturnReason, sendBackToDataEntry,
   exportCaseReviewZip,
   // design → case review return + case review bucket actions
-  showDesignReturn, sendBackToCaseReview, crMissingPick, crMissingDrop, crMissingRemove, saveCrFields, saveReviewInfo,
+  showDesignReturn, sendBackToCaseReview, designEscalateTa, showReworkTaReason, showReworkReturnReason, crMissingPick, crMissingDrop, crMissingRemove, saveCrFields, saveReviewInfo,
   // admin
   adminDeleteCase,
   crSendToDesign, crHoldMissing, showTaNotes, crEscalateTa, crEscalateManager, crPassToScanning,
