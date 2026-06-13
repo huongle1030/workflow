@@ -596,6 +596,7 @@ async function uploadReviewFiles(id, key, files) {
   rebuildAoxReview(id);
 }
 function aspRemoveFile(id, key, idx) { const r = getR(id); if (r.aspFiles && r.aspFiles[key]) { r.aspFiles[key].splice(idx, 1); rebuildAoxReview(id); } }
+function removeReviewFile(id, idx) { const c = getC(id); if (!c || !c.reviewFiles) return; c.reviewFiles.splice(idx, 1); cfSave(c); if (selectedMode) renderMode(selectedMode); toast('File removed'); }
 function setPF(id, group, idx, val) { const r = getR(id); if (!r[group]) r[group] = {}; r[group][idx] = r[group][idx] === val ? null : val; rebuildAoxReview(id); }
 function setDesignNeeds(id, idx) { const r = getR(id); r.designNeeds = r.designNeeds === idx ? null : idx; rebuildAoxReview(id); }
 function setDrApproval(id, val) { const r = getR(id); r.drApproval = r.drApproval === val ? null : val; rebuildAoxReview(id); }
@@ -886,7 +887,10 @@ function renderCaseDetail(c) {
     const args = kind === 'asp' ? `'${c.id}','asp',${i},'${key}'` : `'${c.id}','${kind}',${i}`;
     return `<button class="btn btn-sm" style="margin-left:auto;padding:2px 9px" onclick="event.stopPropagation();CF.previewFile(${args})"><i class="ti ti-${icon}"></i> ${label}</button>`;
   };
-  const fileRow = (f, i, kind, icon) => `<div class="file-item"><i class="ti ti-${icon}"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span>${openBtn(kind, i, f)}</div>`;
+  // In the Case Review tab, let the operator delete a file they uploaded (review files)
+  // in case the wrong one was attached.
+  const delBtn = (kind, i) => (kind === 'review' && selectedMode === 'casereview') ? `<button class="btn btn-sm btn-danger" style="padding:2px 7px;margin-left:6px" onclick="event.stopPropagation();CF.removeReviewFile('${c.id}',${i})"><i class="ti ti-x"></i></button>` : '';
+  const fileRow = (f, i, kind, icon) => `<div class="file-item"><i class="ti ti-${icon}"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span>${openBtn(kind, i, f)}${delBtn(kind, i)}</div>`;
   const aspFileRow = (f, key, i) => `<div class="file-item"><i class="ti ti-file"></i><span class="file-name">${esc(f.name)}</span><span class="file-size">${f.size}</span>${openBtn('asp', i, f, key)}</div>`;
   const fH = c.files.length ? c.files.map((f, i) => fileRow(f, i, 'entry', 'file')).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files attached</span>';
   const rfH = c.reviewFiles.length ? c.reviewFiles.map((f, i) => fileRow(f, i, 'review', 'file')).join('') : '<span style="font-size:12px;color:var(--color-text-tertiary)">No files yet</span>';
@@ -897,8 +901,11 @@ function renderCaseDetail(c) {
   // everything in one place. aspFiles is keyed by section -> [file].
   const isDesign = selectedMode === 'design';
   const crReviewRows = c.reviewFiles.map((f, i) => fileRow(f, i, 'review', 'file')).join('');
-  const crAspRows = r.aspFiles ? Object.keys(r.aspFiles).map(key => (r.aspFiles[key] || []).map((f, i) => aspFileRow(f, key, i)).join('')).join('') : '';
+  // 'missing_info' = files Case Review attached when sending the case back with
+  // clarification; shown in their own section (below), not mixed into the entry files.
+  const crAspRows = r.aspFiles ? Object.keys(r.aspFiles).filter(k => k !== 'missing_info').map(key => (r.aspFiles[key] || []).map((f, i) => aspFileRow(f, key, i)).join('')).join('') : '';
   const caseReviewFilesHtml = crReviewRows + crAspRows;
+  const newCrFilesHtml = (r.aspFiles && r.aspFiles.missing_info ? r.aspFiles.missing_info : []).map((f, i) => aspFileRow(f, 'missing_info', i)).join('');
   let sp = '', reviewInfoPanel = '', leftReviewSel = '';
 
   if (c.stage === 'Data Entry') {
@@ -1082,7 +1089,7 @@ function renderCaseDetail(c) {
     ${c.stage === 'Review' ? reviewInfoPanel : genInfo}
     ${addonsSummaryPanel(c)}
     <div class="panel"><div class="panel-title"><i class="ti ti-clock"></i> Activity</div>${tl}</div>
-    <div class="panel"><div class="panel-title"><i class="ti ti-file"></i> Entry files</div><div class="file-list">${fH}</div>${isDesign && caseReviewFilesHtml ? `<div class="sec-label" style="margin-top:12px">From Case Review (scans &amp; files)</div><div class="file-list">${caseReviewFilesHtml}</div>` : ''}</div>
+    <div class="panel"><div class="panel-title"><i class="ti ti-file"></i> Entry files</div><div class="file-list">${fH}</div>${isDesign && caseReviewFilesHtml ? `<div class="sec-label" style="margin-top:12px">From Case Review (scans &amp; files)</div><div class="file-list">${caseReviewFilesHtml}</div>` : ''}${isDesign && newCrFilesHtml ? `<div class="sec-label" style="margin-top:12px">New files provided by case review</div><div class="file-list">${newCrFilesHtml}</div>` : ''}</div>
     ${leftReviewSel}
     ${(!isDesign && c.reviewFiles.length) ? `<div class="panel"><div class="panel-title"><i class="ti ti-paperclip"></i> Design files</div><div class="file-list">${rfH}</div></div>` : ''}
     ${c.scanFiles && c.scanFiles.length ? `<div class="panel"><div class="panel-title"><i class="ti ti-scan" style="color:#6B5E2F"></i> Scan files</div><div class="file-list">${sfH}</div></div>` : ''}
@@ -1619,7 +1626,7 @@ const CF = {
   saveOutsourceNotes, beginQc,
   // review checklist
   setAcctType, setAspDesignReq, setAspSpec, setAspVerifiedModel, setAspArch, setAspScrewType, setAspScrewCount,
-  aspDragOver, aspDragLeave, aspDrop, aspPick, aspRemoveFile, setPF, setDesignNeeds, setDrApproval, saveReviewNotes, togglePredesigned,
+  aspDragOver, aspDragLeave, aspDrop, aspPick, aspRemoveFile, removeReviewFile, setPF, setDesignNeeds, setDrApproval, saveReviewNotes, togglePredesigned,
   // doctor reqs
   saveDesignReqs, addDesignReq, removeDesignReq, toggleReqsAck,
   // review transitions
